@@ -288,6 +288,34 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
             }
         });
 
+        // Ghost message - sync with partner
+        socket.on('ghost_message', async (data: { sessionId: string; messageIndex: number; isGhosted: boolean }) => {
+            try {
+                const { sessionId, messageIndex, isGhosted } = data;
+                socket.to(sessionId).emit('message_ghosted', {
+                    messageIndex,
+                    isGhosted,
+                    ghostedBy: user.id,
+                });
+            } catch (error) {
+                console.error('Ghost message error:', error);
+            }
+        });
+
+        // React to message - sync with partner
+        socket.on('react_message', async (data: { sessionId: string; messageIndex: number; emoji: string | null }) => {
+            try {
+                const { sessionId, messageIndex, emoji } = data;
+                socket.to(sessionId).emit('message_reaction', {
+                    messageIndex,
+                    emoji,
+                    reactedBy: user.id,
+                });
+            } catch (error) {
+                console.error('React message error:', error);
+            }
+        });
+
         // ==========================
         // SKIP/END SESSION
         // ==========================
