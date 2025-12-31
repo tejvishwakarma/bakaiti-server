@@ -279,6 +279,48 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
             }
         });
 
+        // Image message with expiry
+        socket.on('send_image', async (data: { sessionId: string; imageUrl: string; expirySeconds?: number }) => {
+            try {
+                const { sessionId, imageUrl, expirySeconds = 30 } = data;
+
+                // Verify session
+                const sessionData = await redis.get(redisKeys.session(sessionId));
+                if (!sessionData) {
+                    socket.emit('error', { message: 'Session not found' });
+                    return;
+                }
+
+                const session: SessionData = JSON.parse(sessionData);
+                if (session.user1Id !== user.id && session.user2Id !== user.id) {
+                    socket.emit('error', { message: 'Not in this session' });
+                    return;
+                }
+
+                const timestamp = Date.now();
+                const expiresAt = timestamp + (expirySeconds * 1000);
+
+                // Broadcast image message to session
+                io.to(sessionId).emit('new_message', {
+                    sessionId,
+                    senderId: user.id,
+                    message: '[Image]',
+                    type: 'image',
+                    imageUrl,
+                    expiresAt,
+                    timestamp,
+                });
+
+                console.log(`📸 Image sent to session ${sessionId}, expires in ${expirySeconds}s`);
+
+                // Refresh session TTL
+                await redis.expire(redisKeys.session(sessionId), 1800);
+            } catch (error) {
+                console.error('Send image error:', error);
+                socket.emit('error', { message: 'Failed to send image' });
+            }
+        });
+
         socket.on('typing', async (data: { sessionId: string; isTyping: boolean }) => {
             try {
                 const { sessionId, isTyping } = data;
