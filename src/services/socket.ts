@@ -1,0 +1,346 @@
+import { Server as SocketIOServer, Socket } from 'socket.io';
+import { Server as HttpServer } from 'http';
+import { verifyFirebaseToken } from '../config/firebase';
+import prisma from '../config/database';
+import getRedis, { redisKeys } from '../config/redis';
+import { User } from '@prisma/client';
+
+interface AuthenticatedSocket extends Socket {
+    user?: User;
+}
+
+interface SessionData {
+    user1Id: string;
+    user2Id: string;
+    startedAt: number;
+    moodTheme: string;
+}
+
+// Available mood themes
+const MOOD_THEMES = [
+    'ocean', 'sunset', 'forest', 'night', 'sunrise',
+    'lavender', 'coral', 'arctic', 'desert', 'aurora'
+];
+
+export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
+    const io = new SocketIOServer(httpServer, {
+        cors: {
+            origin: '*', // Configure properly in production
+            methods: ['GET', 'POST'],
+        },
+        pingTimeout: 20000,
+        pingInterval: 25000,
+    });
+
+    // Authentication middleware
+    io.use(async (socket: AuthenticatedSocket, next) => {
+        try {
+            const token = socket.handshake.auth.token;
+            console.log('🔐 Socket auth attempt, token length:', token?.length || 0);
+
+            if (!token) {
+                console.log('❌ No token provided');
+                return next(new Error('Authentication required'));
+            }
+
+            const decodedToken = await verifyFirebaseToken(token);
+            console.log('🔐 Token decoded:', decodedToken ? `uid=${decodedToken.uid}` : 'null');
+
+            if (!decodedToken) {
+                console.log('❌ Token verification failed');
+                return next(new Error('Invalid token'));
+            }
+
+            // Find or create user
+            let user = await prisma.user.findUnique({
+                where: { googleId: decodedToken.uid }
+            });
+
+            if (!user) {
+                console.log('👤 User not found, creating new user...');
+                user = await prisma.user.create({
+                    data: {
+                        googleId: decodedToken.uid,
+                        email: decodedToken.email || '',
+                        displayName: decodedToken.name || null,
+                        photoUrl: decodedToken.picture || null,
+                    }
+                });
+                console.log('✨ New user created:', user.email);
+            }
+
+            if (user.bannedUntil && user.bannedUntil > new Date()) {
+                console.log('❌ User banned until:', user.bannedUntil);
+                return next(new Error('Account suspended'));
+            }
+
+            console.log('✅ Socket auth successful for:', user.email);
+            socket.user = user;
+            next();
+        } catch (error) {
+            console.error('Socket auth error:', error);
+            next(new Error('Authentication failed'));
+        }
+    });
+
+    io.on('connection', async (socket: AuthenticatedSocket) => {
+        const user = socket.user!;
+        const redis = getRedis();
+
+        console.log(`🔌 User connected: ${user.email} (${socket.id})`);
+
+        // Store user's socket ID in Redis
+        await redis.set(redisKeys.userOnline(user.id), socket.id, 'EX', 300);
+
+        // Send user info to client
+        socket.emit('connected', {
+            userId: user.id,
+            displayName: user.displayName,
+            points: user.points,
+        });
+
+        // ==========================
+        // MATCHING EVENTS
+        // ==========================
+
+        socket.on('start_matching', async () => {
+            try {
+                // Check for active penalty
+                const penaltyUntil = await redis.get(redisKeys.penalty(user.id));
+                if (penaltyUntil && parseInt(penaltyUntil) > Date.now()) {
+                    socket.emit('error', {
+                        type: 'penalty',
+                        message: 'You are in cooldown period',
+                        until: parseInt(penaltyUntil)
+                    });
+                    return;
+                }
+
+                // Add to matching queue
+                const queueKey = redisKeys.matchQueue();
+
+                // Check if already in queue
+                const existingPosition = await redis.lpos(queueKey, user.id);
+                if (existingPosition !== null) {
+                    socket.emit('matching_status', { status: 'already_in_queue' });
+                    return;
+                }
+
+                // Try to match with someone in queue
+                const matchedUserId = await redis.lpop(queueKey);
+
+                if (matchedUserId && matchedUserId !== user.id) {
+                    // Found a match!
+                    const matchedSocketId = await redis.get(redisKeys.userOnline(matchedUserId));
+
+                    if (matchedSocketId) {
+                        // Create session
+                        const sessionId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+                        const moodTheme = MOOD_THEMES[Math.floor(Math.random() * MOOD_THEMES.length)];
+
+                        const sessionData: SessionData = {
+                            user1Id: matchedUserId,
+                            user2Id: user.id,
+                            startedAt: Date.now(),
+                            moodTheme,
+                        };
+
+                        await redis.set(
+                            redisKeys.session(sessionId),
+                            JSON.stringify(sessionData),
+                            'EX',
+                            1800 // 30 min TTL
+                        );
+
+                        // Join both users to session room
+                        socket.join(sessionId);
+                        const matchedSocket = io.sockets.sockets.get(matchedSocketId);
+                        matchedSocket?.join(sessionId);
+
+                        // Notify both users
+                        io.to(sessionId).emit('match_found', {
+                            sessionId,
+                            moodTheme,
+                        });
+
+                        console.log(`✨ Match created: ${sessionId}`);
+                    } else {
+                        // Matched user disconnected, push current user to queue
+                        await redis.rpush(queueKey, user.id);
+                        socket.emit('matching_status', { status: 'searching' });
+                    }
+                } else {
+                    // No one in queue, add self
+                    if (matchedUserId) {
+                        // Put back the user we popped (was self)
+                        await redis.lpush(queueKey, matchedUserId);
+                    }
+                    await redis.rpush(queueKey, user.id);
+                    socket.emit('matching_status', { status: 'searching' });
+                }
+            } catch (error) {
+                console.error('Start matching error:', error);
+                socket.emit('error', { message: 'Failed to start matching' });
+            }
+        });
+
+        socket.on('stop_matching', async () => {
+            try {
+                const redis = getRedis();
+                await redis.lrem(redisKeys.matchQueue(), 0, user.id);
+                socket.emit('matching_status', { status: 'stopped' });
+            } catch (error) {
+                console.error('Stop matching error:', error);
+            }
+        });
+
+        // ==========================
+        // CHAT EVENTS
+        // ==========================
+
+        socket.on('send_message', async (data: { sessionId: string; message: string }) => {
+            try {
+                const { sessionId, message } = data;
+
+                if (!message || typeof message !== 'string' || message.length > 1000) {
+                    socket.emit('error', { message: 'Invalid message' });
+                    return;
+                }
+
+                // Verify session exists and user is part of it
+                const sessionData = await redis.get(redisKeys.session(sessionId));
+                if (!sessionData) {
+                    socket.emit('error', { message: 'Session not found' });
+                    return;
+                }
+
+                const session: SessionData = JSON.parse(sessionData);
+                if (session.user1Id !== user.id && session.user2Id !== user.id) {
+                    socket.emit('error', { message: 'Not in this session' });
+                    return;
+                }
+
+                // Broadcast message to session (including sender for confirmation)
+                io.to(sessionId).emit('new_message', {
+                    sessionId,
+                    senderId: user.id,
+                    message: message.trim(),
+                    timestamp: Date.now(),
+                });
+
+                // Refresh session TTL
+                await redis.expire(redisKeys.session(sessionId), 1800);
+            } catch (error) {
+                console.error('Send message error:', error);
+                socket.emit('error', { message: 'Failed to send message' });
+            }
+        });
+
+        socket.on('typing', async (data: { sessionId: string; isTyping: boolean }) => {
+            try {
+                const { sessionId, isTyping } = data;
+                socket.to(sessionId).emit('partner_typing', { isTyping });
+            } catch (error) {
+                console.error('Typing indicator error:', error);
+            }
+        });
+
+        // ==========================
+        // SKIP/END SESSION
+        // ==========================
+
+        socket.on('skip', async (data: { sessionId: string }) => {
+            try {
+                const { sessionId } = data;
+                const redis = getRedis();
+
+                // Get session data
+                const sessionData = await redis.get(redisKeys.session(sessionId));
+                if (sessionData) {
+                    const session: SessionData = JSON.parse(sessionData);
+
+                    // Notify partner
+                    socket.to(sessionId).emit('partner_skipped');
+
+                    // Leave room
+                    socket.leave(sessionId);
+
+                    // Delete session
+                    await redis.del(redisKeys.session(sessionId));
+                }
+
+                // Track skip count for penalties
+                const skipKey = redisKeys.skipCount(user.id);
+                const skipCount = await redis.incr(skipKey);
+
+                if (skipCount === 1) {
+                    await redis.expire(skipKey, 60); // 60 second window
+                }
+
+                // Check for penalty
+                if (skipCount >= 3) {
+                    const penaltyDuration = 5 * 60 * 1000; // 5 minutes
+                    const penaltyUntil = Date.now() + penaltyDuration;
+                    await redis.set(redisKeys.penalty(user.id), penaltyUntil.toString(), 'EX', 300);
+
+                    socket.emit('penalty_applied', {
+                        type: 'rapid_skip',
+                        until: penaltyUntil,
+                        duration: penaltyDuration,
+                    });
+
+                    console.log(`⚠️ Penalty applied to ${user.email} for rapid skipping`);
+                }
+
+                socket.emit('session_ended', { reason: 'you_skipped' });
+            } catch (error) {
+                console.error('Skip error:', error);
+                socket.emit('error', { message: 'Failed to skip' });
+            }
+        });
+
+        socket.on('end_chat', async (data: { sessionId: string }) => {
+            try {
+                const { sessionId } = data;
+                const redis = getRedis();
+
+                // Notify partner
+                socket.to(sessionId).emit('partner_left');
+
+                // Leave room and delete session
+                socket.leave(sessionId);
+                await redis.del(redisKeys.session(sessionId));
+
+                socket.emit('session_ended', { reason: 'you_ended' });
+            } catch (error) {
+                console.error('End chat error:', error);
+            }
+        });
+
+        // ==========================
+        // DISCONNECT HANDLING
+        // ==========================
+
+        socket.on('disconnect', async () => {
+            console.log(`🔌 User disconnected: ${user.email}`);
+
+            try {
+                // Remove from queue
+                await redis.lrem(redisKeys.matchQueue(), 0, user.id);
+
+                // Remove online status
+                await redis.del(redisKeys.userOnline(user.id));
+
+                // Note: Session will auto-expire via TTL
+                // Partner will notice disconnect via ping timeout
+            } catch (error) {
+                console.error('Disconnect cleanup error:', error);
+            }
+        });
+    });
+
+    console.log('✅ Socket.IO initialized');
+    return io;
+}
+
+export default initializeSocketIO;

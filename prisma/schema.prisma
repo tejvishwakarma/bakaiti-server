@@ -1,0 +1,111 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// User model - stores all user data
+model User {
+  id                   String    @id @default(uuid())
+  googleId             String    @unique @map("google_id")
+  email                String    @unique
+  displayName          String?   @map("display_name")
+  photoUrl             String?   @map("photo_url")
+  points               Int       @default(0)
+  subscriptionStatus   SubscriptionStatus @default(FREE) @map("subscription_status")
+  subscriptionExpiresAt DateTime? @map("subscription_expires_at")
+  totalAdsWatchedToday Int       @default(0) @map("total_ads_watched_today")
+  adsResetAt           DateTime? @map("ads_reset_at")
+  dailyLoginStreak     Int       @default(0) @map("daily_login_streak")
+  lastLoginAt          DateTime? @map("last_login_at")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  bannedUntil          DateTime? @map("banned_until")
+
+  // Relations
+  purchases      Purchase[]
+  inventory      Inventory[]
+  skipPenalties  SkipPenalty[]
+  subscriptions  Subscription[]
+
+  @@map("users")
+}
+
+enum SubscriptionStatus {
+  FREE
+  ACTIVE
+  EXPIRED
+}
+
+// Purchase history
+model Purchase {
+  id          String      @id @default(uuid())
+  userId      String      @map("user_id")
+  itemType    ItemType    @map("item_type")
+  itemId      String      @map("item_id")
+  pointsSpent Int         @map("points_spent")
+  purchasedAt DateTime    @default(now()) @map("purchased_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("purchases")
+}
+
+enum ItemType {
+  THEME
+  FILTER
+  CONSUMABLE
+}
+
+// User inventory (owned items)
+model Inventory {
+  id         String   @id @default(uuid())
+  userId     String   @map("user_id")
+  itemType   String   @map("item_type")
+  itemId     String   @map("item_id")
+  acquiredAt DateTime @default(now()) @map("acquired_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, itemType, itemId])
+  @@map("inventory")
+}
+
+// Skip penalties
+model SkipPenalty {
+  id           String   @id @default(uuid())
+  userId       String   @map("user_id")
+  penaltyUntil DateTime @map("penalty_until")
+  reason       String?
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("skip_penalties")
+}
+
+// Subscriptions
+model Subscription {
+  id            String   @id @default(uuid())
+  userId        String   @map("user_id")
+  platform      Platform
+  transactionId String   @unique @map("transaction_id")
+  productId     String   @map("product_id")
+  startedAt     DateTime @default(now()) @map("started_at")
+  expiresAt     DateTime @map("expires_at")
+  autoRenew     Boolean  @default(true) @map("auto_renew")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("subscriptions")
+}
+
+enum Platform {
+  IOS
+  ANDROID
+}
