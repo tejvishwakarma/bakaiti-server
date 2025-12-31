@@ -116,4 +116,59 @@ router.delete('/me', authMiddleware, async (req: Request, res: Response) => {
     }
 });
 
+// Reward points for watching ad
+router.post('/me/points/ad-reward', authMiddleware, async (req: Request, res: Response) => {
+    try {
+        const user = req.user!;
+        const now = new Date();
+        const POINTS_PER_AD = 50;
+        const MAX_ADS_PER_DAY = 10;
+
+        // Check if ads counter should reset (new day)
+        const adsResetAt = user.adsResetAt;
+        let adsWatchedToday = user.totalAdsWatchedToday;
+
+        if (!adsResetAt || now.toDateString() !== adsResetAt.toDateString()) {
+            // New day - reset counter
+            adsWatchedToday = 0;
+        }
+
+        // Check daily limit
+        if (adsWatchedToday >= MAX_ADS_PER_DAY) {
+            res.status(429).json({
+                error: 'Daily ad limit reached',
+                adsWatchedToday,
+                maxAdsPerDay: MAX_ADS_PER_DAY,
+            });
+            return;
+        }
+
+        // Award points
+        const updatedUser = await prisma.user.update({
+            where: { id: user.id },
+            data: {
+                points: { increment: POINTS_PER_AD },
+                totalAdsWatchedToday: adsWatchedToday + 1,
+                adsResetAt: now,
+            },
+            select: {
+                points: true,
+                totalAdsWatchedToday: true,
+            }
+        });
+
+        console.log(`🎬 User ${user.id} watched ad, earned ${POINTS_PER_AD} points`);
+
+        res.json({
+            pointsEarned: POINTS_PER_AD,
+            totalPoints: updatedUser.points,
+            adsWatchedToday: updatedUser.totalAdsWatchedToday,
+            adsRemaining: MAX_ADS_PER_DAY - updatedUser.totalAdsWatchedToday,
+        });
+    } catch (error) {
+        console.error('Ad reward error:', error);
+        res.status(500).json({ error: 'Failed to reward points' });
+    }
+});
+
 export default router;
