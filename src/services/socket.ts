@@ -447,6 +447,88 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
         });
 
         // ==========================
+        // WORD BOMB MINI-GAME
+        // ==========================
+
+        // Start a Word Bomb game
+        socket.on('start_word_bomb', async (data: { sessionId: string }) => {
+            try {
+                const { sessionId } = data;
+
+                // Generate random letter (weighted towards common letters)
+                const commonLetters = 'ABCDEFGHILMNOPRSTW';
+                const letter = commonLetters[Math.floor(Math.random() * commonLetters.length)];
+
+                // Store game state in Redis (15 second TTL)
+                const gameKey = `wordbomb:${sessionId}`;
+                await redis.set(gameKey, JSON.stringify({
+                    letter,
+                    startedBy: user.id,
+                    startedAt: Date.now(),
+                    answered: false,
+                }), 'EX', 20);
+
+                console.log(`💣 Word Bomb started in ${sessionId}: Letter ${letter}`);
+
+                // Broadcast to session
+                io.to(sessionId).emit('word_bomb_started', {
+                    letter,
+                    startedBy: user.id,
+                    timeLimit: 15,
+                });
+            } catch (error) {
+                console.error('Start word bomb error:', error);
+            }
+        });
+
+        // Answer Word Bomb
+        socket.on('word_bomb_answer', async (data: { sessionId: string; answer: string }) => {
+            try {
+                const { sessionId, answer } = data;
+
+                const gameKey = `wordbomb:${sessionId}`;
+                const gameData = await redis.get(gameKey);
+
+                if (!gameData) {
+                    socket.emit('word_bomb_error', { message: 'No active game' });
+                    return;
+                }
+
+                const game = JSON.parse(gameData);
+
+                if (game.answered) {
+                    socket.emit('word_bomb_error', { message: 'Already answered' });
+                    return;
+                }
+
+                // Validate: word must start with the letter and be 3+ chars
+                const trimmedAnswer = answer.trim().toUpperCase();
+                if (trimmedAnswer.length >= 3 && trimmedAnswer.startsWith(game.letter)) {
+                    // Winner!
+                    game.answered = true;
+                    game.winnerId = user.id;
+                    game.winningWord = trimmedAnswer;
+                    await redis.set(gameKey, JSON.stringify(game), 'EX', 5);
+
+                    console.log(`🏆 Word Bomb winner: ${user.id} with "${trimmedAnswer}"`);
+
+                    io.to(sessionId).emit('word_bomb_won', {
+                        winnerId: user.id,
+                        word: trimmedAnswer,
+                        letter: game.letter,
+                    });
+                } else {
+                    // Wrong answer
+                    socket.emit('word_bomb_wrong', {
+                        message: `"${answer}" doesn't start with ${game.letter} or is too short`,
+                    });
+                }
+            } catch (error) {
+                console.error('Word bomb answer error:', error);
+            }
+        });
+
+        // ==========================
         // SKIP/END SESSION
         // ==========================
 
