@@ -392,6 +392,61 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
         });
 
         // ==========================
+        // MOOD LIGHTING SYNC
+        // ==========================
+
+        // Propose a theme change to partner
+        socket.on('propose_theme', async (data: { sessionId: string; theme: string }) => {
+            try {
+                const { sessionId, theme } = data;
+                console.log(`🌈 Theme proposal: ${theme} in session ${sessionId}`);
+                socket.to(sessionId).emit('theme_proposed', {
+                    theme,
+                    proposedBy: user.id,
+                });
+            } catch (error) {
+                console.error('Propose theme error:', error);
+            }
+        });
+
+        // Accept theme proposal
+        socket.on('accept_theme', async (data: { sessionId: string; theme: string }) => {
+            try {
+                const { sessionId, theme } = data;
+                console.log(`✅ Theme accepted: ${theme} in session ${sessionId}`);
+
+                // Update session with new theme
+                const sessionData = await redis.get(redisKeys.session(sessionId));
+                if (sessionData) {
+                    const session: SessionData = JSON.parse(sessionData);
+                    session.moodTheme = theme;
+                    await redis.set(redisKeys.session(sessionId), JSON.stringify(session), 'EX', 1800);
+                }
+
+                // Notify both users
+                io.to(sessionId).emit('theme_changed', {
+                    theme,
+                    acceptedBy: user.id,
+                });
+            } catch (error) {
+                console.error('Accept theme error:', error);
+            }
+        });
+
+        // Reject theme proposal
+        socket.on('reject_theme', async (data: { sessionId: string }) => {
+            try {
+                const { sessionId } = data;
+                console.log(`❌ Theme rejected in session ${sessionId}`);
+                socket.to(sessionId).emit('theme_rejected', {
+                    rejectedBy: user.id,
+                });
+            } catch (error) {
+                console.error('Reject theme error:', error);
+            }
+        });
+
+        // ==========================
         // SKIP/END SESSION
         // ==========================
 
