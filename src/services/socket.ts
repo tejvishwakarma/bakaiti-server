@@ -116,9 +116,10 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
                     return;
                 }
 
-                // Get user's match history (users matched in last 24h)
-                const matchHistoryKey = redisKeys.matchHistory(user.id);
-                const recentlyMatched = await redis.smembers(matchHistoryKey);
+                // TODO: Re-enable for production - 24h match history check
+                // const matchHistoryKey = redisKeys.matchHistory(user.id);
+                // const recentlyMatched = await redis.smembers(matchHistoryKey);
+                const recentlyMatched: string[] = []; // Disabled for testing
 
                 // Add to matching queue
                 const queueKey = redisKeys.matchQueue();
@@ -130,7 +131,7 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
                     return;
                 }
 
-                // Try to find a match from the queue (filter out recently matched)
+                // Try to find a match from the queue
                 let matchedUserId: string | null = null;
                 const skippedUsers: string[] = [];
 
@@ -144,21 +145,19 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
                         continue;
                     }
 
-                    // Check if we matched this user in last 24h
-                    if (recentlyMatched.includes(candidateId)) {
-                        skippedUsers.push(candidateId);
-                        continue;
-                    }
-
-                    // Check if candidate has matched with us in last 24h
-                    const candidateHistory = await redis.sismember(
-                        redisKeys.matchHistory(candidateId),
-                        user.id
-                    );
-                    if (candidateHistory) {
-                        skippedUsers.push(candidateId);
-                        continue;
-                    }
+                    // TODO: Re-enable for production - 24h match history check
+                    // if (recentlyMatched.includes(candidateId)) {
+                    //     skippedUsers.push(candidateId);
+                    //     continue;
+                    // }
+                    // const candidateHistory = await redis.sismember(
+                    //     redisKeys.matchHistory(candidateId),
+                    //     user.id
+                    // );
+                    // if (candidateHistory) {
+                    //     skippedUsers.push(candidateId);
+                    //     continue;
+                    // }
 
                     // Found valid match
                     matchedUserId = candidateId;
