@@ -116,6 +116,10 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
                     return;
                 }
 
+                // Get user's match history (users matched in last 24h)
+                const matchHistoryKey = redisKeys.matchHistory(user.id);
+                const recentlyMatched = await redis.smembers(matchHistoryKey);
+
                 // Add to matching queue
                 const queueKey = redisKeys.matchQueue();
 
@@ -126,10 +130,47 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
                     return;
                 }
 
-                // Try to match with someone in queue
-                const matchedUserId = await redis.lpop(queueKey);
+                // Try to find a match from the queue (filter out recently matched)
+                let matchedUserId: string | null = null;
+                const skippedUsers: string[] = [];
 
-                if (matchedUserId && matchedUserId !== user.id) {
+                while (true) {
+                    const candidateId = await redis.lpop(queueKey);
+                    if (!candidateId) break;
+
+                    if (candidateId === user.id) {
+                        // Don't match with self
+                        skippedUsers.push(candidateId);
+                        continue;
+                    }
+
+                    // Check if we matched this user in last 24h
+                    if (recentlyMatched.includes(candidateId)) {
+                        skippedUsers.push(candidateId);
+                        continue;
+                    }
+
+                    // Check if candidate has matched with us in last 24h
+                    const candidateHistory = await redis.sismember(
+                        redisKeys.matchHistory(candidateId),
+                        user.id
+                    );
+                    if (candidateHistory) {
+                        skippedUsers.push(candidateId);
+                        continue;
+                    }
+
+                    // Found valid match
+                    matchedUserId = candidateId;
+                    break;
+                }
+
+                // Put back skipped users to the front of queue
+                if (skippedUsers.length > 0) {
+                    await redis.lpush(queueKey, ...skippedUsers.reverse());
+                }
+
+                if (matchedUserId) {
                     // Found a match!
                     const matchedSocketId = await redis.get(redisKeys.userOnline(matchedUserId));
 
@@ -152,6 +193,13 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
                             1800 // 30 min TTL
                         );
 
+                        // Store match history for both users (24h TTL = 86400 seconds)
+                        const historyTTL = 86400;
+                        await redis.sadd(redisKeys.matchHistory(user.id), matchedUserId);
+                        await redis.expire(redisKeys.matchHistory(user.id), historyTTL);
+                        await redis.sadd(redisKeys.matchHistory(matchedUserId), user.id);
+                        await redis.expire(redisKeys.matchHistory(matchedUserId), historyTTL);
+
                         // Join both users to session room
                         socket.join(sessionId);
                         const matchedSocket = io.sockets.sockets.get(matchedSocketId);
@@ -165,16 +213,12 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
 
                         console.log(`✨ Match created: ${sessionId}`);
                     } else {
-                        // Matched user disconnected, push current user to queue
+                        // Matched user disconnected, add self to queue
                         await redis.rpush(queueKey, user.id);
                         socket.emit('matching_status', { status: 'searching' });
                     }
                 } else {
-                    // No one in queue, add self
-                    if (matchedUserId) {
-                        // Put back the user we popped (was self)
-                        await redis.lpush(queueKey, matchedUserId);
-                    }
+                    // No valid match found, add self to queue
                     await redis.rpush(queueKey, user.id);
                     socket.emit('matching_status', { status: 'searching' });
                 }

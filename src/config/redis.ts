@@ -82,6 +82,9 @@ export const redisKeys = {
 
     // Active filters
     activeFilter: (userId: string, filterType: string) => `filter:${userId}:${filterType}`,
+
+    // Match history - prevents rematching same person in 24h
+    matchHistory: (userId: string) => `match:history:${userId}`,
 } as const;
 
 export default getRedis;
