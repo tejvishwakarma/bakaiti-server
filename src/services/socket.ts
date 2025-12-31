@@ -271,6 +271,39 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
                     timestamp: Date.now(),
                 });
 
+                // Same Vibe detection - extract emojis and check for match
+                const emojiRegex = /[\u{1F300}-\u{1F9FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]|[\u{1F600}-\u{1F64F}]|[\u{1F680}-\u{1F6FF}]/gu;
+                const emojis = message.match(emojiRegex);
+
+                if (emojis && emojis.length > 0) {
+                    const emoji = emojis[0]; // Use first emoji
+                    const partnerId = session.user1Id === user.id ? session.user2Id : session.user1Id;
+
+                    // Check if partner sent same emoji recently (within 5s)
+                    const partnerEmojiKey = redisKeys.recentEmoji(sessionId, partnerId);
+                    const partnerRecentEmoji = await redis.get(partnerEmojiKey);
+
+                    if (partnerRecentEmoji === emoji) {
+                        // Same Vibe! 🎉
+                        console.log(`🎵 Same Vibe detected! Both sent: ${emoji}`);
+                        io.to(sessionId).emit('same_vibe', {
+                            emoji,
+                            timestamp: Date.now(),
+                        });
+                        // Clear both users' emoji cache
+                        await redis.del(partnerEmojiKey);
+                        await redis.del(redisKeys.recentEmoji(sessionId, user.id));
+                    } else {
+                        // Store this user's emoji for 5 seconds
+                        await redis.set(
+                            redisKeys.recentEmoji(sessionId, user.id),
+                            emoji,
+                            'EX',
+                            5
+                        );
+                    }
+                }
+
                 // Refresh session TTL
                 await redis.expire(redisKeys.session(sessionId), 1800);
             } catch (error) {

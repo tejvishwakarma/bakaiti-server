@@ -85,6 +85,9 @@ export const redisKeys = {
 
     // Match history - prevents rematching same person in 24h
     matchHistory: (userId: string) => `match:history:${userId}`,
+
+    // Recent emoji for Same Vibe detection (stores last emoji per user in session)
+    recentEmoji: (sessionId: string, userId: string) => `vibe:emoji:${sessionId}:${userId}`,
 } as const;
 
 export default getRedis;
