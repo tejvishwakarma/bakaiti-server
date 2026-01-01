@@ -533,6 +533,30 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
         });
 
         // ==========================
+        // SESSION HEARTBEAT
+        // ==========================
+
+        socket.on('session_ping', async (data: { sessionId: string }) => {
+            try {
+                const { sessionId } = data;
+                const redis = getRedis();
+
+                // Check if session still exists
+                const sessionData = await redis.get(redisKeys.session(sessionId));
+
+                if (sessionData) {
+                    socket.emit('session_pong', { valid: true, sessionId });
+                } else {
+                    console.log(`⚠️ Dead session detected: ${sessionId}`);
+                    socket.emit('session_pong', { valid: false, sessionId });
+                }
+            } catch (error) {
+                console.error('Session ping error:', error);
+                socket.emit('session_pong', { valid: false });
+            }
+        });
+
+        // ==========================
         // SKIP/END SESSION
         // ==========================
 
