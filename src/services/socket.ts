@@ -614,8 +614,33 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
                 // Remove online status
                 await redis.del(redisKeys.userOnline(user.id));
 
-                // Note: Session will auto-expire via TTL
-                // Partner will notice disconnect via ping timeout
+                // Find and cleanup any active session
+                // Check all rooms the socket was in
+                const rooms = Array.from(socket.rooms);
+                for (const room of rooms) {
+                    // Skip the socket's own room
+                    if (room === socket.id) continue;
+
+                    // This might be a session room
+                    const sessionData = await redis.get(redisKeys.session(room));
+                    if (sessionData) {
+                        const session: SessionData = JSON.parse(sessionData);
+
+                        // Verify user was part of this session
+                        if (session.user1Id === user.id || session.user2Id === user.id) {
+                            console.log(`📤 Notifying partner in session ${room} that partner disconnected`);
+
+                            // Notify partner that user disconnected
+                            socket.to(room).emit('partner_disconnected', {
+                                reason: 'connection_lost',
+                            });
+
+                            // Delete the session
+                            await redis.del(redisKeys.session(room));
+                            console.log(`🗑️ Session ${room} deleted due to disconnect`);
+                        }
+                    }
+                }
             } catch (error) {
                 console.error('Disconnect cleanup error:', error);
             }
