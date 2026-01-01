@@ -557,6 +557,90 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
         });
 
         // ==========================
+        // AUDIO/VIDEO CALLING (WebRTC Signaling)
+        // ==========================
+
+        // Request a call (audio or video)
+        socket.on('call_request', async (data: { sessionId: string; callType: 'audio' | 'video' }) => {
+            try {
+                const { sessionId, callType } = data;
+                console.log(`📞 Call request: ${callType} in session ${sessionId} from ${user.email}`);
+
+                // Forward to partner in session
+                socket.to(sessionId).emit('incoming_call', {
+                    callType,
+                    callerId: user.id,
+                    callerName: user.displayName || 'User',
+                });
+            } catch (error) {
+                console.error('Call request error:', error);
+            }
+        });
+
+        // Accept incoming call
+        socket.on('call_accept', async (data: { sessionId: string }) => {
+            try {
+                const { sessionId } = data;
+                console.log(`✅ Call accepted in session ${sessionId}`);
+                socket.to(sessionId).emit('call_accepted');
+            } catch (error) {
+                console.error('Call accept error:', error);
+            }
+        });
+
+        // Reject incoming call
+        socket.on('call_reject', async (data: { sessionId: string }) => {
+            try {
+                const { sessionId } = data;
+                console.log(`❌ Call rejected in session ${sessionId}`);
+                socket.to(sessionId).emit('call_rejected');
+            } catch (error) {
+                console.error('Call reject error:', error);
+            }
+        });
+
+        // WebRTC offer (SDP)
+        socket.on('webrtc_offer', async (data: { sessionId: string; offer: any }) => {
+            try {
+                const { sessionId, offer } = data;
+                socket.to(sessionId).emit('webrtc_offer', { offer });
+            } catch (error) {
+                console.error('WebRTC offer error:', error);
+            }
+        });
+
+        // WebRTC answer (SDP)
+        socket.on('webrtc_answer', async (data: { sessionId: string; answer: any }) => {
+            try {
+                const { sessionId, answer } = data;
+                socket.to(sessionId).emit('webrtc_answer', { answer });
+            } catch (error) {
+                console.error('WebRTC answer error:', error);
+            }
+        });
+
+        // WebRTC ICE candidate
+        socket.on('webrtc_ice', async (data: { sessionId: string; candidate: any }) => {
+            try {
+                const { sessionId, candidate } = data;
+                socket.to(sessionId).emit('webrtc_ice', { candidate });
+            } catch (error) {
+                console.error('WebRTC ICE error:', error);
+            }
+        });
+
+        // End call
+        socket.on('call_end', async (data: { sessionId: string }) => {
+            try {
+                const { sessionId } = data;
+                console.log(`📵 Call ended in session ${sessionId}`);
+                socket.to(sessionId).emit('call_ended');
+            } catch (error) {
+                console.error('Call end error:', error);
+            }
+        });
+
+        // ==========================
         // SKIP/END SESSION
         // ==========================
 
