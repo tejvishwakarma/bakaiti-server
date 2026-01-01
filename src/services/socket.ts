@@ -546,6 +546,10 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
                 if (sessionData) {
                     const session: SessionData = JSON.parse(sessionData);
 
+                    // Clear userSession for both users
+                    await redis.del(redisKeys.userSession(session.user1Id));
+                    await redis.del(redisKeys.userSession(session.user2Id));
+
                     // Notify partner
                     socket.to(sessionId).emit('partner_skipped');
 
@@ -554,6 +558,7 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
 
                     // Delete session
                     await redis.del(redisKeys.session(sessionId));
+                    console.log(`⏭️ Session ${sessionId} skipped by ${user.email}`);
                 }
 
                 // Track skip count for penalties
