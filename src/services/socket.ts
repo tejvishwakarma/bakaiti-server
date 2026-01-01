@@ -204,6 +204,10 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
                         const matchedSocket = io.sockets.sockets.get(matchedSocketId);
                         matchedSocket?.join(sessionId);
 
+                        // Store active session for both users (for disconnect handling)
+                        await redis.set(redisKeys.userSession(user.id), sessionId, 'EX', 1800);
+                        await redis.set(redisKeys.userSession(matchedUserId), sessionId, 'EX', 1800);
+
                         // Notify both users
                         io.to(sessionId).emit('match_found', {
                             sessionId,
@@ -587,6 +591,15 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
                 const { sessionId } = data;
                 const redis = getRedis();
 
+                // Get session data to clear both users' session keys
+                const sessionData = await redis.get(redisKeys.session(sessionId));
+                if (sessionData) {
+                    const session: SessionData = JSON.parse(sessionData);
+                    // Clear userSession for both users
+                    await redis.del(redisKeys.userSession(session.user1Id));
+                    await redis.del(redisKeys.userSession(session.user2Id));
+                }
+
                 // Notify partner
                 socket.to(sessionId).emit('partner_left');
 
@@ -595,6 +608,7 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
                 await redis.del(redisKeys.session(sessionId));
 
                 socket.emit('session_ended', { reason: 'you_ended' });
+                console.log(`🔚 Session ${sessionId} ended by ${user.email}`);
             } catch (error) {
                 console.error('End chat error:', error);
             }
@@ -614,32 +628,39 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
                 // Remove online status
                 await redis.del(redisKeys.userOnline(user.id));
 
-                // Find and cleanup any active session
-                // Check all rooms the socket was in
-                const rooms = Array.from(socket.rooms);
-                for (const room of rooms) {
-                    // Skip the socket's own room
-                    if (room === socket.id) continue;
+                // Get user's active session from Redis (more reliable than socket.rooms)
+                const sessionId = await redis.get(redisKeys.userSession(user.id));
 
-                    // This might be a session room
-                    const sessionData = await redis.get(redisKeys.session(room));
+                if (sessionId) {
+                    console.log(`📤 User ${user.email} was in session ${sessionId}`);
+
+                    // Get session data
+                    const sessionData = await redis.get(redisKeys.session(sessionId));
                     if (sessionData) {
                         const session: SessionData = JSON.parse(sessionData);
 
-                        // Verify user was part of this session
-                        if (session.user1Id === user.id || session.user2Id === user.id) {
-                            console.log(`📤 Notifying partner in session ${room} that partner disconnected`);
+                        // Find partner ID
+                        const partnerId = session.user1Id === user.id ? session.user2Id : session.user1Id;
 
-                            // Notify partner that user disconnected
-                            socket.to(room).emit('partner_disconnected', {
-                                reason: 'connection_lost',
-                            });
-
-                            // Delete the session
-                            await redis.del(redisKeys.session(room));
-                            console.log(`🗑️ Session ${room} deleted due to disconnect`);
+                        // Get partner's socket ID and notify
+                        const partnerSocketId = await redis.get(redisKeys.userOnline(partnerId));
+                        if (partnerSocketId) {
+                            const partnerSocket = io.sockets.sockets.get(partnerSocketId);
+                            if (partnerSocket) {
+                                console.log(`📤 Notifying partner ${partnerId} that partner disconnected`);
+                                partnerSocket.emit('partner_disconnected', {
+                                    reason: 'connection_lost',
+                                });
+                            }
                         }
+
+                        // Delete session
+                        await redis.del(redisKeys.session(sessionId));
+                        console.log(`🗑️ Session ${sessionId} deleted due to disconnect`);
                     }
+
+                    // Clear user's session tracking
+                    await redis.del(redisKeys.userSession(user.id));
                 }
             } catch (error) {
                 console.error('Disconnect cleanup error:', error);

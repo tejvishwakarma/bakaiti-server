@@ -71,6 +71,9 @@ export const redisKeys = {
     // User online status
     userOnline: (userId: string) => `user:online:${userId}`,
 
+    // User's active session (for disconnect handling)
+    userSession: (userId: string) => `user:session:${userId}`,
+
     // Rate limiting
     rateLimit: (userId: string, action: string) => `ratelimit:${userId}:${action}`,
 
