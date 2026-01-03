@@ -1,5 +1,6 @@
 import { Server as SocketIOServer, Socket } from 'socket.io';
 import { Server as HttpServer } from 'http';
+import config from '../config';
 import { verifyFirebaseToken } from '../config/firebase';
 import prisma from '../config/database';
 import getRedis, { redisKeys } from '../config/redis';
@@ -25,8 +26,9 @@ const MOOD_THEMES = [
 export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
     const io = new SocketIOServer(httpServer, {
         cors: {
-            origin: '*', // Configure properly in production
+            origin: config.cors.allowedOrigins,
             methods: ['GET', 'POST'],
+            credentials: true,
         },
         pingTimeout: 20000,
         pingInterval: 25000,
