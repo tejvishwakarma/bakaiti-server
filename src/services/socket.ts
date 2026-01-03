@@ -123,6 +123,9 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
                 // const recentlyMatched = await redis.smembers(matchHistoryKey);
                 const recentlyMatched: string[] = []; // Disabled for testing
 
+                // Refresh user's online status (prevents stale key after idle)
+                await redis.set(redisKeys.userOnline(user.id), socket.id, 'EX', 300);
+
                 // Add to matching queue
                 const queueKey = redisKeys.matchQueue();
 
