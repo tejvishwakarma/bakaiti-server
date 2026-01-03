@@ -102,6 +102,71 @@ router.get('/me/inventory', authMiddleware, async (req: Request, res: Response) 
     }
 });
 
+// Purchase item (theme) and add to inventory
+router.post('/me/inventory/purchase', authMiddleware, async (req: Request, res: Response) => {
+    try {
+        const { itemType, itemId, price } = req.body;
+        const user = req.user!;
+
+        // Validate input
+        if (!itemType || !itemId || typeof price !== 'number') {
+            res.status(400).json({ error: 'Invalid request: itemType, itemId, and price required' });
+            return;
+        }
+
+        // Check if user has enough points
+        if (user.points < price) {
+            res.status(400).json({ error: 'Insufficient points', currentPoints: user.points });
+            return;
+        }
+
+        // Check if already owns this item
+        const existing = await prisma.inventory.findFirst({
+            where: {
+                userId: user.id,
+                itemType,
+                itemId,
+            }
+        });
+
+        if (existing) {
+            res.status(400).json({ error: 'Item already owned' });
+            return;
+        }
+
+        // Transaction: deduct points and add to inventory
+        const [updatedUser, inventoryItem] = await prisma.$transaction([
+            prisma.user.update({
+                where: { id: user.id },
+                data: { points: { decrement: price } },
+                select: { points: true },
+            }),
+            prisma.inventory.create({
+                data: {
+                    userId: user.id,
+                    itemType,
+                    itemId,
+                }
+            })
+        ]);
+
+        console.log(`🛒 User ${user.id} purchased ${itemType}:${itemId} for ${price} points`);
+
+        res.json({
+            success: true,
+            remainingPoints: updatedUser.points,
+            item: {
+                itemType: inventoryItem.itemType,
+                itemId: inventoryItem.itemId,
+                acquiredAt: inventoryItem.acquiredAt,
+            }
+        });
+    } catch (error) {
+        console.error('Purchase error:', error);
+        res.status(500).json({ error: 'Purchase failed' });
+    }
+});
+
 // Delete account
 router.delete('/me', authMiddleware, async (req: Request, res: Response) => {
     try {
