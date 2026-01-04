@@ -213,10 +213,36 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
                         await redis.set(redisKeys.userSession(user.id), sessionId, 'EX', 1800);
                         await redis.set(redisKeys.userSession(matchedUserId), sessionId, 'EX', 1800);
 
-                        // Notify both users
-                        io.to(sessionId).emit('match_found', {
+                        // Fetch both users' profiles for partner info
+                        const [currentUserProfile, matchedUserProfile] = await Promise.all([
+                            prisma.user.findUnique({
+                                where: { id: user.id },
+                                select: { displayName: true, photoUrl: true }
+                            }),
+                            prisma.user.findUnique({
+                                where: { id: matchedUserId },
+                                select: { displayName: true, photoUrl: true }
+                            })
+                        ]);
+
+                        // Notify current user with matched user's info as partner
+                        socket.emit('match_found', {
                             sessionId,
                             moodTheme,
+                            partner: {
+                                displayName: matchedUserProfile?.displayName || 'Partner',
+                                photoUrl: matchedUserProfile?.photoUrl || null,
+                            }
+                        });
+
+                        // Notify matched user with current user's info as partner
+                        matchedSocket?.emit('match_found', {
+                            sessionId,
+                            moodTheme,
+                            partner: {
+                                displayName: currentUserProfile?.displayName || 'Partner',
+                                photoUrl: currentUserProfile?.photoUrl || null,
+                            }
                         });
 
                         console.log(`✨ Match created: ${sessionId}`);
