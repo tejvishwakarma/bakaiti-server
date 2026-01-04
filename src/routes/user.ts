@@ -57,24 +57,48 @@ router.get('/me', authMiddleware, async (req: Request, res: Response) => {
     }
 });
 
-// Update display name
+// Update user profile (display name and/or photo)
 router.patch('/me', authMiddleware, async (req: Request, res: Response) => {
     try {
-        const { displayName } = req.body;
+        const { displayName, photoUrl } = req.body;
+        const updateData: { displayName?: string; photoUrl?: string } = {};
 
-        if (typeof displayName !== 'string' || displayName.length > 50) {
-            res.status(400).json({ error: 'Invalid display name' });
+        // Validate and add displayName if provided
+        if (displayName !== undefined) {
+            if (typeof displayName !== 'string' || displayName.length > 50) {
+                res.status(400).json({ error: 'Invalid display name (max 50 characters)' });
+                return;
+            }
+            updateData.displayName = displayName.trim();
+        }
+
+        // Validate and add photoUrl if provided
+        if (photoUrl !== undefined) {
+            if (typeof photoUrl !== 'string' || photoUrl.length > 500) {
+                res.status(400).json({ error: 'Invalid photo URL' });
+                return;
+            }
+            updateData.photoUrl = photoUrl;
+        }
+
+        if (Object.keys(updateData).length === 0) {
+            res.status(400).json({ error: 'No valid fields to update' });
             return;
         }
 
         const updatedUser = await prisma.user.update({
             where: { id: req.user!.id },
-            data: { displayName: displayName.trim() },
+            data: updateData,
             select: {
                 id: true,
                 displayName: true,
+                photoUrl: true,
+                email: true,
+                points: true,
             }
         });
+
+        console.log(`👤 User ${req.user!.id} updated profile:`, updateData);
 
         res.json({ user: updatedUser });
     } catch (error) {
