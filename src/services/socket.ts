@@ -53,10 +53,30 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
                 return next(new Error('Invalid token'));
             }
 
-            // Find or create user
+            // Find user by googleId first, then by email (in case of account re-creation)
             let user = await prisma.user.findUnique({
                 where: { googleId: decodedToken.uid }
             });
+
+            if (!user && decodedToken.email) {
+                // Check if user exists with same email (re-login after account deletion)
+                user = await prisma.user.findUnique({
+                    where: { email: decodedToken.email }
+                });
+
+                if (user) {
+                    // Update the googleId to the new Firebase UID
+                    user = await prisma.user.update({
+                        where: { email: decodedToken.email },
+                        data: {
+                            googleId: decodedToken.uid,
+                            displayName: decodedToken.name || user.displayName,
+                            photoUrl: decodedToken.picture || user.photoUrl,
+                        }
+                    });
+                    console.log('🔄 User googleId updated for:', user.email);
+                }
+            }
 
             if (!user) {
                 console.log('👤 User not found, creating new user...');
