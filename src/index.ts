@@ -16,8 +16,15 @@ async function main() {
     // Initialize Firebase Admin
     initializeFirebase();
 
-    // Initialize Redis connection (auto-connects with lazyConnect: false)
+    // Initialize Redis connection and verify it's ready
     const redis = getRedis();
+    try {
+        await redis.ping();
+        console.log('✅ Redis connection verified');
+    } catch (err) {
+        console.error('❌ Redis connection failed:', err);
+        process.exit(1);
+    }
 
     // Create Express app
     const app = express();

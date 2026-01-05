@@ -654,6 +654,11 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
         socket.on('webrtc_offer', async (data: { sessionId: string; offer: any }) => {
             try {
                 const { sessionId, offer } = data;
+                // Validate offer structure (basic SDP validation)
+                if (!offer || typeof offer !== 'object' || !offer.type || !offer.sdp) {
+                    console.error('❌ Invalid WebRTC offer structure');
+                    return;
+                }
                 socket.to(sessionId).emit('webrtc_offer', { offer });
             } catch (error) {
                 console.error('WebRTC offer error:', error);
@@ -664,6 +669,11 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
         socket.on('webrtc_answer', async (data: { sessionId: string; answer: any }) => {
             try {
                 const { sessionId, answer } = data;
+                // Validate answer structure (basic SDP validation)
+                if (!answer || typeof answer !== 'object' || !answer.type || !answer.sdp) {
+                    console.error('❌ Invalid WebRTC answer structure');
+                    return;
+                }
                 socket.to(sessionId).emit('webrtc_answer', { answer });
             } catch (error) {
                 console.error('WebRTC answer error:', error);
@@ -674,6 +684,11 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
         socket.on('webrtc_ice', async (data: { sessionId: string; candidate: any }) => {
             try {
                 const { sessionId, candidate } = data;
+                // Validate ICE candidate structure
+                if (!candidate || typeof candidate !== 'object') {
+                    console.error('❌ Invalid WebRTC ICE candidate structure');
+                    return;
+                }
                 socket.to(sessionId).emit('webrtc_ice', { candidate });
             } catch (error) {
                 console.error('WebRTC ICE error:', error);
