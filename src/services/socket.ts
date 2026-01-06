@@ -125,8 +125,11 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
         // MATCHING EVENTS
         // ==========================
 
-        socket.on('start_matching', async () => {
+        socket.on('start_matching', async (data: { mood?: string } = {}) => {
             try {
+                const userMood = data.mood || 'random';
+                console.log(`🎭 User ${user.id} started matching with mood: ${userMood}`);
+
                 // Check for active penalty
                 const penaltyUntil = await redis.get(redisKeys.penalty(user.id));
                 if (penaltyUntil && parseInt(penaltyUntil) > Date.now()) {
@@ -146,8 +149,12 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
                 // Refresh user's online status (prevents stale key after idle)
                 await redis.set(redisKeys.userOnline(user.id), socket.id, 'EX', 300);
 
+                // Store user's current mood for matching
+                await redis.set(`user:${user.id}:mood`, userMood, 'EX', 300);
+
                 // Add to matching queue
                 const queueKey = redisKeys.matchQueue();
+                const moodQueueKey = `matching_queue:mood:${userMood}`;
 
                 // Check if already in queue
                 const existingPosition = await redis.lpos(queueKey, user.id);
@@ -156,42 +163,67 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
                     return;
                 }
 
-                // Try to find a match from the queue
+                // Try to find a match - first from same mood queue, then general queue
                 let matchedUserId: string | null = null;
                 const skippedUsers: string[] = [];
+                const skippedMoodUsers: string[] = [];
 
-                while (true) {
-                    const candidateId = await redis.lpop(queueKey);
-                    if (!candidateId) break;
+                // Phase 1: Try mood-specific queue (except for 'random' which goes straight to general)
+                if (userMood !== 'random') {
+                    while (true) {
+                        const candidateId = await redis.lpop(moodQueueKey);
+                        if (!candidateId) break;
 
-                    if (candidateId === user.id) {
-                        // Don't match with self
-                        skippedUsers.push(candidateId);
-                        continue;
+                        if (candidateId === user.id) {
+                            skippedMoodUsers.push(candidateId);
+                            continue;
+                        }
+
+                        // Verify candidate is still online
+                        const candidateOnline = await redis.get(redisKeys.userOnline(candidateId));
+                        if (!candidateOnline) {
+                            continue; // Skip offline users
+                        }
+
+                        // Complementary matching: vent -> listeners, etc.
+                        // For now, same mood matches same mood
+                        matchedUserId = candidateId;
+                        console.log(`🎭 Mood match found: ${user.id} <-> ${candidateId} (mood: ${userMood})`);
+                        break;
                     }
 
-                    // TODO: Re-enable for production - 24h match history check
-                    // if (recentlyMatched.includes(candidateId)) {
-                    //     skippedUsers.push(candidateId);
-                    //     continue;
-                    // }
-                    // const candidateHistory = await redis.sismember(
-                    //     redisKeys.matchHistory(candidateId),
-                    //     user.id
-                    // );
-                    // if (candidateHistory) {
-                    //     skippedUsers.push(candidateId);
-                    //     continue;
-                    // }
-
-                    // Found valid match
-                    matchedUserId = candidateId;
-                    break;
+                    // Put back skipped mood users
+                    if (skippedMoodUsers.length > 0) {
+                        await redis.lpush(moodQueueKey, ...skippedMoodUsers.reverse());
+                    }
                 }
 
-                // Put back skipped users to the front of queue
-                if (skippedUsers.length > 0) {
-                    await redis.lpush(queueKey, ...skippedUsers.reverse());
+                // Phase 2: Try general queue if no mood match
+                if (!matchedUserId) {
+                    while (true) {
+                        const candidateId = await redis.lpop(queueKey);
+                        if (!candidateId) break;
+
+                        if (candidateId === user.id) {
+                            skippedUsers.push(candidateId);
+                            continue;
+                        }
+
+                        // Verify candidate is still online
+                        const candidateOnline = await redis.get(redisKeys.userOnline(candidateId));
+                        if (!candidateOnline) {
+                            continue; // Skip offline users
+                        }
+
+                        matchedUserId = candidateId;
+                        console.log(`🎲 Random match found: ${user.id} <-> ${candidateId}`);
+                        break;
+                    }
+
+                    // Put back skipped users to the front of queue
+                    if (skippedUsers.length > 0) {
+                        await redis.lpush(queueKey, ...skippedUsers.reverse());
+                    }
                 }
 
                 if (matchedUserId) {
@@ -245,10 +277,17 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
                             })
                         ]);
 
+                        // Get matched user's mood
+                        const matchedUserMood = await redis.get(`user:${matchedUserId}:mood`) || 'random';
+                        const isSameMood = userMood === matchedUserMood || userMood === 'random' || matchedUserMood === 'random';
+
                         // Notify current user with matched user's info as partner
                         socket.emit('match_found', {
                             sessionId,
                             moodTheme,
+                            yourMood: userMood,
+                            partnerMood: matchedUserMood,
+                            isSameMood,
                             partner: {
                                 displayName: matchedUserProfile?.displayName || 'Partner',
                                 photoUrl: matchedUserProfile?.photoUrl || null,
@@ -259,6 +298,9 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
                         matchedSocket?.emit('match_found', {
                             sessionId,
                             moodTheme,
+                            yourMood: matchedUserMood,
+                            partnerMood: userMood,
+                            isSameMood,
                             partner: {
                                 displayName: currentUserProfile?.displayName || 'Partner',
                                 photoUrl: currentUserProfile?.photoUrl || null,
@@ -267,14 +309,20 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
 
                         console.log(`✨ Match created: ${sessionId}`);
                     } else {
-                        // Matched user disconnected, add self to queue
+                        // Matched user disconnected, add self to both queues
+                        if (userMood !== 'random') {
+                            await redis.rpush(moodQueueKey, user.id);
+                        }
                         await redis.rpush(queueKey, user.id);
-                        socket.emit('matching_status', { status: 'searching' });
+                        socket.emit('matching_status', { status: 'searching', mood: userMood });
                     }
                 } else {
-                    // No valid match found, add self to queue
+                    // No valid match found, add self to mood queue and general queue
+                    if (userMood !== 'random') {
+                        await redis.rpush(moodQueueKey, user.id);
+                    }
                     await redis.rpush(queueKey, user.id);
-                    socket.emit('matching_status', { status: 'searching' });
+                    socket.emit('matching_status', { status: 'searching', mood: userMood });
                 }
             } catch (error) {
                 console.error('Start matching error:', error);
