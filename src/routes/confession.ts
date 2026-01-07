@@ -5,6 +5,15 @@ import { ConfessionCategory } from '@prisma/client';
 
 const router = Router();
 
+// Helper: Check if user is banned
+async function checkBanned(userId: string): Promise<boolean> {
+    const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { isBanned: true }
+    });
+    return user?.isBanned ?? false;
+}
+
 // Get all confessions (paginated)
 router.get('/', authMiddleware, async (req: Request, res: Response) => {
     try {
@@ -82,6 +91,11 @@ router.post('/', authMiddleware, async (req: Request, res: Response) => {
     try {
         const user = req.user!;
         const { content, category = 'RANDOM', isAnonymous = true } = req.body;
+
+        // Check if user is banned
+        if (await checkBanned(user.id)) {
+            return res.status(403).json({ error: 'You are banned from posting' });
+        }
 
         if (!content || typeof content !== 'string' || content.length < 10) {
             return res.status(400).json({ error: 'Confession must be at least 10 characters' });
@@ -209,6 +223,11 @@ router.post('/:id/react', authMiddleware, async (req: Request, res: Response) =>
         const { id } = req.params;
         const { emoji } = req.body;
 
+        // Check if user is banned
+        if (await checkBanned(user.id)) {
+            return res.status(403).json({ error: 'You are banned from reacting' });
+        }
+
         const validEmojis = ['🔥', '😢', '😂', '💔', '🤯', '❤️'];
         if (!emoji || !validEmojis.includes(emoji)) {
             return res.status(400).json({ error: 'Invalid emoji' });
@@ -272,6 +291,11 @@ router.post('/:id/comments', authMiddleware, async (req: Request, res: Response)
         const { id } = req.params;
         const { content, isAnonymous = true } = req.body;
 
+        // Check if user is banned
+        if (await checkBanned(user.id)) {
+            return res.status(403).json({ error: 'You are banned from commenting' });
+        }
+
         if (!content || typeof content !== 'string' || content.length < 1) {
             return res.status(400).json({ error: 'Comment cannot be empty' });
         }
@@ -313,4 +337,87 @@ router.post('/:id/comments', authMiddleware, async (req: Request, res: Response)
     }
 });
 
+// ========================
+// REPORT ENDPOINTS
+// ========================
+
+// Report a confession
+router.post('/:id/report', authMiddleware, async (req: Request, res: Response) => {
+    try {
+        const user = req.user!;
+        const { id } = req.params;
+        const { reason } = req.body;
+
+        if (!reason || typeof reason !== 'string' || reason.length < 5) {
+            return res.status(400).json({ error: 'Please provide a reason (min 5 characters)' });
+        }
+
+        // Check if already reported by this user
+        const existingReport = await prisma.report.findFirst({
+            where: {
+                reporterId: user.id,
+                confessionId: id,
+                status: 'PENDING'
+            }
+        });
+
+        if (existingReport) {
+            return res.status(400).json({ error: 'You have already reported this confession' });
+        }
+
+        await prisma.report.create({
+            data: {
+                reporterId: user.id,
+                confessionId: id,
+                reason: reason.trim()
+            }
+        });
+
+        res.json({ success: true, message: 'Report submitted' });
+    } catch (error) {
+        console.error('Report confession error:', error);
+        res.status(500).json({ error: 'Failed to submit report' });
+    }
+});
+
+// Report a comment
+router.post('/:confessionId/comments/:commentId/report', authMiddleware, async (req: Request, res: Response) => {
+    try {
+        const user = req.user!;
+        const { commentId } = req.params;
+        const { reason } = req.body;
+
+        if (!reason || typeof reason !== 'string' || reason.length < 5) {
+            return res.status(400).json({ error: 'Please provide a reason (min 5 characters)' });
+        }
+
+        // Check if already reported by this user
+        const existingReport = await prisma.report.findFirst({
+            where: {
+                reporterId: user.id,
+                commentId: commentId,
+                status: 'PENDING'
+            }
+        });
+
+        if (existingReport) {
+            return res.status(400).json({ error: 'You have already reported this comment' });
+        }
+
+        await prisma.report.create({
+            data: {
+                reporterId: user.id,
+                commentId: commentId,
+                reason: reason.trim()
+            }
+        });
+
+        res.json({ success: true, message: 'Report submitted' });
+    } catch (error) {
+        console.error('Report comment error:', error);
+        res.status(500).json({ error: 'Failed to submit report' });
+    }
+});
+
 export default router;
+

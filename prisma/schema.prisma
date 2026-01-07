@@ -26,6 +26,13 @@ model User {
   lastLoginAt          DateTime? @map("last_login_at")
   createdAt            DateTime  @default(now()) @map("created_at")
   bannedUntil          DateTime? @map("banned_until")
+  
+  // Admin & moderation fields
+  isAdmin              Boolean   @default(false) @map("is_admin")
+  isBanned             Boolean   @default(false) @map("is_banned")
+  bannedAt             DateTime? @map("banned_at")
+  bannedBy             String?   @map("banned_by")
+  banReason            String?   @map("ban_reason")
 
   // Relations
   purchases            Purchase[]
@@ -35,6 +42,7 @@ model User {
   confessions          Confession[]
   confessionReactions  ConfessionReaction[]
   confessionComments   ConfessionComment[]
+  reportsMade          Report[]  @relation("ReportsMade")
 
   @@map("users")
 }
@@ -140,6 +148,7 @@ model Confession {
   author    User                 @relation(fields: [authorId], references: [id], onDelete: Cascade)
   reactions ConfessionReaction[]
   comments  ConfessionComment[]
+  reports   Report[]
 
   @@map("confessions")
 }
@@ -170,6 +179,38 @@ model ConfessionComment {
 
   confession Confession @relation(fields: [confessionId], references: [id], onDelete: Cascade)
   user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reports    Report[]
 
   @@map("confession_comments")
 }
+
+// ========================
+// MODERATION & REPORTS
+// ========================
+
+enum ReportStatus {
+  PENDING
+  RESOLVED
+  DISMISSED
+}
+
+// Reports for moderation
+model Report {
+  id           String       @id @default(uuid())
+  reporterId   String       @map("reporter_id")
+  confessionId String?      @map("confession_id")
+  commentId    String?      @map("comment_id")
+  reason       String       @db.Text
+  status       ReportStatus @default(PENDING)
+  createdAt    DateTime     @default(now()) @map("created_at")
+  resolvedAt   DateTime?    @map("resolved_at")
+  resolvedBy   String?      @map("resolved_by")
+  resolution   String?      @map("resolution")
+
+  reporter   User               @relation("ReportsMade", fields: [reporterId], references: [id], onDelete: Cascade)
+  confession Confession?        @relation(fields: [confessionId], references: [id], onDelete: Cascade)
+  comment    ConfessionComment? @relation(fields: [commentId], references: [id], onDelete: Cascade)
+
+  @@map("reports")
+}
+
