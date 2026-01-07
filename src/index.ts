@@ -8,7 +8,7 @@ import { initializeFirebase } from './config/firebase';
 import getRedis from './config/redis';
 import prisma from './config/database';
 import { initializeSocketIO } from './services';
-import { healthRoutes, userRoutes } from './routes';
+import { healthRoutes, userRoutes, confessionRoutes } from './routes';
 
 async function main() {
     console.log('🚀 Starting Bakaiti Backend...');
@@ -45,6 +45,7 @@ async function main() {
     // Routes
     app.use('/api', healthRoutes);
     app.use('/api/user', userRoutes);
+    app.use('/api/confessions', confessionRoutes);
 
     // 404 handler
     app.use((_req, res) => {

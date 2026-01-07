@@ -28,10 +28,13 @@ model User {
   bannedUntil          DateTime? @map("banned_until")
 
   // Relations
-  purchases      Purchase[]
-  inventory      Inventory[]
-  skipPenalties  SkipPenalty[]
-  subscriptions  Subscription[]
+  purchases            Purchase[]
+  inventory            Inventory[]
+  skipPenalties        SkipPenalty[]
+  subscriptions        Subscription[]
+  confessions          Confession[]
+  confessionReactions  ConfessionReaction[]
+  confessionComments   ConfessionComment[]
 
   @@map("users")
 }
@@ -108,4 +111,65 @@ model Subscription {
 enum Platform {
   IOS
   ANDROID
+}
+
+// ========================
+// CONFESSION WALL MODELS
+// ========================
+
+enum ConfessionCategory {
+  LOVE
+  SECRET
+  FUNNY
+  RANT
+  REGRET
+  RANDOM
+}
+
+// Confession posts
+model Confession {
+  id          String             @id @default(uuid())
+  content     String             @db.Text
+  category    ConfessionCategory @default(RANDOM)
+  authorId    String             @map("author_id")
+  isAnonymous Boolean            @default(true) @map("is_anonymous")
+  likesCount  Int                @default(0) @map("likes_count")
+  viewsCount  Int                @default(0) @map("views_count")
+  createdAt   DateTime           @default(now()) @map("created_at")
+
+  author    User                 @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  reactions ConfessionReaction[]
+  comments  ConfessionComment[]
+
+  @@map("confessions")
+}
+
+// Reactions on confessions (fire, cry, laugh, etc.)
+model ConfessionReaction {
+  id           String   @id @default(uuid())
+  confessionId String   @map("confession_id")
+  userId       String   @map("user_id")
+  emoji        String   // 🔥, 😢, 😂, 💔, 🤯
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  confession Confession @relation(fields: [confessionId], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([confessionId, userId])
+  @@map("confession_reactions")
+}
+
+// Comments on confessions
+model ConfessionComment {
+  id           String   @id @default(uuid())
+  confessionId String   @map("confession_id")
+  userId       String   @map("user_id")
+  content      String   @db.Text
+  isAnonymous  Boolean  @default(true) @map("is_anonymous")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  confession Confession @relation(fields: [confessionId], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("confession_comments")
 }
