@@ -545,6 +545,19 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
                     return;
                 }
 
+                // RATE LIMITING: Check if user is sending too many messages
+                const rateLimitKey = `ratelimit:socket:msg:${user.id}`;
+                const currentCount = await redis.incr(rateLimitKey);
+
+                if (currentCount === 1) {
+                    await redis.expire(rateLimitKey, 60); // 1 minute window
+                }
+
+                if (currentCount > 60) {
+                    socket.emit('error', { message: 'You are sending messages too fast. Please slow down.' });
+                    return;
+                }
+
                 // Verify session exists and user is part of it
                 const sessionData = await redis.get(redisKeys.session(sessionId));
                 if (!sessionData) {

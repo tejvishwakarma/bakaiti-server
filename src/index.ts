@@ -2,6 +2,7 @@ import express from 'express';
 import { createServer } from 'http';
 import cors from 'cors';
 import helmet from 'helmet';
+import { rateLimitMiddleware } from './middleware/rateLimit';
 
 import config from './config';
 import { initializeFirebase } from './config/firebase';
@@ -41,6 +42,9 @@ async function main() {
     // Body parsing
     app.use(express.json({ limit: '5mb' })); // For image uploads
     app.use(express.urlencoded({ extended: true }));
+
+    // Global Rate Limiting
+    app.use(rateLimitMiddleware);
 
     // Routes
     app.use('/api', healthRoutes);
