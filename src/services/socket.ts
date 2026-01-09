@@ -26,17 +26,56 @@ const ghostSessions: Map<string, {
     ghostProfile: GhostProfile;
     chatHistory: Array<{ role: string; content: string }>;
     preferredLanguage?: string; // Store language preference per session
+    pendingMessages: string[]; // Buffer for multiple messages
+    responseTimeout?: NodeJS.Timeout; // Timeout before AI responds
 }> = new Map();
 
-// Pending match timeouts - will trigger ghost match after 30s
+// Pending match timeouts - will trigger ghost match after 10s
 const pendingMatchTimeouts: Map<string, NodeJS.Timeout> = new Map();
-const AI_MATCH_TIMEOUT_MS = 30000; // 30 seconds
+const AI_MATCH_TIMEOUT_MS = 10000; // 10 seconds
+
+// Message buffer settings
+const BASE_WAIT_MS = 3000; // Wait 3 seconds after last message
+const INCOMPLETE_WAIT_MS = 5000; // Wait 5 seconds if message seems incomplete
+
+// Detect if message is incomplete (user might send more)
+function isIncompleteMessage(text: string): boolean {
+    const lowerText = text.toLowerCase().trim();
+
+    // Very short messages often have follow-ups
+    if (lowerText.length < 5) return true;
+
+    // Common patterns that suggest more coming
+    const incompletePatterns = [
+        /\.{2,}$/, // ends with ..
+        /\?{2,}$/, // ends with ??
+        /btw$/i, // ends with btw
+        /and$/i, // ends with and
+        /but$/i, // ends with but
+        /like$/i, // ends with like
+        /so$/i, // ends with so
+        /wait$/i, // wait
+        /one sec/i, // one sec
+        /hold on/i, // hold on
+        /ruk/i, // ruk (wait in hindi)
+        /sun/i, // sun (listen in hindi)
+        /ek min/i, // one minute
+    ];
+
+    return incompletePatterns.some(pattern => pattern.test(lowerText));
+}
+
+// Random delay for human-like timing (3-8 seconds before typing shows)
+function getRandomThinkingDelay(): number {
+    return 3000 + Math.random() * 5000;
+}
 
 // Available mood themes
 const MOOD_THEMES = [
     'ocean', 'sunset', 'forest', 'night', 'sunrise',
     'lavender', 'coral', 'arctic', 'desert', 'aurora'
 ];
+
 
 /**
  * Start a timeout for ghost matching - will match user with AI if no real match found
@@ -101,7 +140,8 @@ function startGhostMatchTimeout(
             // Store ghost session data for message handling
             ghostSessions.set(sessionId, {
                 ghostProfile,
-                chatHistory: []
+                chatHistory: [],
+                pendingMessages: [] // Initialize message buffer
             });
 
             // Join socket to session room
@@ -524,7 +564,7 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
                     timestamp: Date.now(),
                 });
 
-                // Handle ghost session - generate AI response
+                // Handle ghost session - buffer messages and generate AI response
                 if (session.isGhostSession) {
                     const ghostSession = ghostSessions.get(sessionId);
                     if (ghostSession) {
@@ -537,45 +577,76 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
                             console.log(`[AI] Language switched to: ${detectedLanguage}`);
                         }
 
-                        // Add user message to history
-                        ghostSession.chatHistory.push({ role: 'user', content: message.trim() });
+                        // Add message to pending buffer
+                        ghostSession.pendingMessages.push(message.trim());
 
-                        // Show typing indicator
-                        socket.emit('partner_typing', { isTyping: true });
-
-                        // Generate AI response with character personality
-                        try {
-                            // Build character-specific prompt if character exists
-                            const characterPrompt = ghostProfile.character
-                                ? buildCharacterPrompt(ghostProfile.character)
-                                : undefined;
-
-                            const aiResponse = await callAI(
-                                message.trim(),
-                                ghostSession.chatHistory,
-                                characterPrompt,
-                                ghostSession.preferredLanguage // Pass language preference
-                            );
-
-                            // Calculate human-like delay
-                            const delay = getTypingDelay(aiResponse.length);
-
-                            setTimeout(() => {
-                                socket.emit('partner_typing', { isTyping: false });
-                                socket.emit('new_message', {
-                                    sessionId,
-                                    senderId: ghostProfile.id,
-                                    message: aiResponse,
-                                    timestamp: Date.now(),
-                                });
-
-                                // Add AI response to history
-                                ghostSession.chatHistory.push({ role: 'assistant', content: aiResponse });
-                            }, delay);
-                        } catch (aiError) {
-                            console.error('AI response error:', aiError);
-                            socket.emit('partner_typing', { isTyping: false });
+                        // Clear any existing response timeout
+                        if (ghostSession.responseTimeout) {
+                            clearTimeout(ghostSession.responseTimeout);
                         }
+
+                        // Determine wait time based on message
+                        const waitTime = isIncompleteMessage(message)
+                            ? INCOMPLETE_WAIT_MS
+                            : BASE_WAIT_MS;
+
+                        console.log(`[AI] Buffering message, waiting ${waitTime}ms for more...`);
+
+                        // Set new timeout to process messages
+                        ghostSession.responseTimeout = setTimeout(async () => {
+                            try {
+                                // Combine all pending messages
+                                const combinedMessage = ghostSession.pendingMessages.join('\n');
+                                ghostSession.pendingMessages = []; // Clear buffer
+
+                                // Add combined message to history
+                                ghostSession.chatHistory.push({ role: 'user', content: combinedMessage });
+
+                                // Random "thinking" delay before typing
+                                const thinkingDelay = getRandomThinkingDelay();
+
+                                setTimeout(async () => {
+                                    // Show typing indicator
+                                    socket.emit('partner_typing', { isTyping: true });
+
+                                    try {
+                                        // Build character-specific prompt if character exists
+                                        const characterPrompt = ghostProfile.character
+                                            ? buildCharacterPrompt(ghostProfile.character)
+                                            : undefined;
+
+                                        const aiResponse = await callAI(
+                                            combinedMessage,
+                                            ghostSession.chatHistory,
+                                            characterPrompt,
+                                            ghostSession.preferredLanguage
+                                        );
+
+                                        // Calculate typing delay (for the actual typing)
+                                        const typingDelay = getTypingDelay(aiResponse.length);
+
+                                        setTimeout(() => {
+                                            socket.emit('partner_typing', { isTyping: false });
+                                            socket.emit('new_message', {
+                                                sessionId,
+                                                senderId: ghostProfile.id,
+                                                message: aiResponse,
+                                                timestamp: Date.now(),
+                                            });
+
+                                            // Add AI response to history
+                                            ghostSession.chatHistory.push({ role: 'assistant', content: aiResponse });
+                                        }, typingDelay);
+                                    } catch (aiError) {
+                                        console.error('AI response error:', aiError);
+                                        socket.emit('partner_typing', { isTyping: false });
+                                    }
+                                }, thinkingDelay);
+
+                            } catch (error) {
+                                console.error('Message processing error:', error);
+                            }
+                        }, waitTime);
                     }
 
                     // Skip emoji detection for ghost sessions
