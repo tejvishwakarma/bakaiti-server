@@ -5,8 +5,8 @@ import { verifyFirebaseToken } from '../config/firebase';
 import prisma from '../config/database';
 import getRedis, { redisKeys } from '../config/redis';
 import { User } from '@prisma/client';
-import { callAI, getTypingDelay } from './aiService';
-import { generateGhostProfile, getConversationStarter, GhostProfile } from '../utils/ghostProfiles';
+import { callAI, getTypingDelay, detectLanguageRequest } from './aiService';
+import { generateGhostProfile, getConversationStarter, buildCharacterPrompt, GhostProfile, GhostCharacter } from '../utils/ghostProfiles';
 
 interface AuthenticatedSocket extends Socket {
     user?: User;
@@ -25,6 +25,7 @@ interface SessionData {
 const ghostSessions: Map<string, {
     ghostProfile: GhostProfile;
     chatHistory: Array<{ role: string; content: string }>;
+    preferredLanguage?: string; // Store language preference per session
 }> = new Map();
 
 // Pending match timeouts - will trigger ghost match after 30s
@@ -126,7 +127,10 @@ function startGhostMatchTimeout(
 
             // Send initial greeting after a short delay (like a real person)
             setTimeout(async () => {
-                const greeting = getConversationStarter(userMood);
+                // Use character personality for greeting
+                const greeting = ghostProfile.character
+                    ? getConversationStarter(ghostProfile.character)
+                    : `heyyy! kya scene h? 😄`;
 
                 // Emit typing indicator
                 socket.emit('partner_typing', { isTyping: true });
@@ -526,15 +530,32 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
                     if (ghostSession) {
                         const ghostProfile = ghostSession.ghostProfile;
 
+                        // Detect language switch request
+                        const detectedLanguage = detectLanguageRequest(message);
+                        if (detectedLanguage) {
+                            ghostSession.preferredLanguage = detectedLanguage;
+                            console.log(`[AI] Language switched to: ${detectedLanguage}`);
+                        }
+
                         // Add user message to history
                         ghostSession.chatHistory.push({ role: 'user', content: message.trim() });
 
                         // Show typing indicator
                         socket.emit('partner_typing', { isTyping: true });
 
-                        // Generate AI response
+                        // Generate AI response with character personality
                         try {
-                            const aiResponse = await callAI(message.trim(), ghostSession.chatHistory);
+                            // Build character-specific prompt if character exists
+                            const characterPrompt = ghostProfile.character
+                                ? buildCharacterPrompt(ghostProfile.character)
+                                : undefined;
+
+                            const aiResponse = await callAI(
+                                message.trim(),
+                                ghostSession.chatHistory,
+                                characterPrompt,
+                                ghostSession.preferredLanguage // Pass language preference
+                            );
 
                             // Calculate human-like delay
                             const delay = getTypingDelay(aiResponse.length);
