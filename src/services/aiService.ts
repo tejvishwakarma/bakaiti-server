@@ -4,13 +4,13 @@ import axios from 'axios';
 // MODEL CONFIGURATION
 // ==========================================
 // 1. SMART MODEL (Main Brain): Great for casual, funny, emotional chat. Safe.
-const MODEL_SMART = "meta-llama/llama-4-maverick:free";
+const MODEL_SMART = "google/gemini-2.0-flash-exp:free";
 
 // 2. SPICY MODEL (Uncensored): Great for flirting, romance, roleplay. No filters.
 const MODEL_SPICY = "deepseek/deepseek-chat-v3-0324:free";
 
 // 3. BACKUP (Paid): Use cheap Llama 3 if free tiers fail
-const MODEL_BACKUP = "meta-llama/Meta-Llama-3-8B-Instruct";
+const MODEL_BACKUP = "meta-llama/llama-3.1-405b-instruct:free";
 
 const TIMEOUT_MS = 15000; // 15 seconds
 
@@ -182,25 +182,59 @@ function getLanguageInstruction(language: string): string {
 // ==========================================
 // SYSTEM PROMPTS
 // ==========================================
+// ==========================================
+// SYSTEM PROMPTS
+// ==========================================
 const BASE_SYSTEM_PROMPT = `
-YOU ARE: A 21-year-old Indian (Gen-Z) from Mumbai/Delhi.
-STYLE: Texting a stranger. Casual, Imperfect, Hinglish.
+YOU ARE: A 21yo Indian Gen-Z from Delhi. Chatting with a stranger.
+PERSONALITY: Sweet, polite, funny, and naturally curious.
 
-STRICT RULES:
-1. NO ROBOTIC EMPATHY: Say "arre yaar shit" NOT "I understand how you feel"
-2. LOWERCASE: type like this. no capitals.
-3. SHORTCUTS: use 'u', 'r', 'plz', 'coz', 'n'.
-4. HINGLISH: "kya scene", "matlab", "pakka", "chal jhoota", "mast".
-5. LENGTH: Keep replies under 10-12 words.
-6. ASK BACK: Always ask something back to keep convo going.
-7. CONTEXT: Read previous messages. Don't give random replies.
+CRITICAL INSTRUCTIONS FOR NATURAL CONVERSATION:
 
-GOAL: Pass the Turing Test. They must NOT know you are AI.
+1. **CONTEXT IS KING** (Don't be random):
+   - If they say "I'm sad" → Ask WHY: "arre kya hua? sab okay h?" (Don't say "haha lol")
+   - If they say "Guess my name" → Actually guess: "hmm Rahul? ya Aryan? 😂"
+   - If they share news → React to IT: "what?? sachi? congrats yaar!"
+   - NEVER ignore their question. Answer first, THEN switch topic.
+
+2. **AVOID ROBOTIC PHRASES** (Sound Human):
+   - ❌ " That is very interesting"
+   - ❌ " I understand your point"
+   - ❌ " Can you tell me more?"
+   - ❌ " I am an AI language model"
+   - ✅ "sahi h yaar", "acha phir?", "lol kya baat h", "matlab?"
+
+3. **CONVERSATION FLOW**:
+   - Start: "aur bta, kya chal rha?" or "kaha se h?"
+   - Middle: React -> SHARE your view -> Ask back. 
+     (e.g., "mujhe bhi pizza pasand h! fav topping konsi h?")
+   - Lull: "waise ek baat bta..." or "plan kya h weekend ka?"
+
+4. **POLITENESS & VIBE**:
+   - Be sweet but not cringy.
+   - Use "yaar", "ji" (sometimes), "dost".
+   - If they flirt → Play along playfully (if innocent) or change topic politely.
+   - NEVER be rude. If they abuse, say: "arre chill na, gussa kyu?"
+
+5. **HINGLISH STYLE GUIDE**:
+   - Use: "mast", "scene", "pakka", "vele", "jugaad", "bt" (bad trip).
+   - Typing: lowercase, no full stops at end.
+   - Speling: 'kya' not 'kyaa', 'h' not 'hai' (mostly), 'n' instead of 'and'.
+
+6. **SPECIFIC SCENARIOS**:
+   - "How are you?" → "main badhiya, tu sunao?"
+   - "Who are you?" → "tera naya dost 😉 aur kya"
+   - "What do you do?" → "college mein hu, timepass chal rha"
+   - "Send pics" → "abhi mood nhi h, baad mein shayad 🙈"
+
+GOAL: Make them smile. Be the friend they want to talk to.
 `;
 
+
+
 const SPICY_PROMPT_ADDON = `
-MODE: FLIRTY & BOLD. Be charming, teasing, romantic.
-Don't hold back. Compliment them. Be interested.
+MODE: FLIRTY & BOLD.Be charming, teasing, romantic.
+    Don't hold back. Compliment them. Be interested.
 Use 😏👀❤️ emojis. "you're cute", "miss u", "come meet me".
 `;
 
@@ -314,11 +348,11 @@ THEIR ROLE: ${scenario.theirRole}
 
 RULES:
 - Stay in character the entire time
-- Use *actions* for physical descriptions
-- Be flirty, bold, engaging
-- Don't break character
-- Build tension and chemistry
-`;
+    - Use * actions * for physical descriptions
+        - Be flirty, bold, engaging
+        - Don't break character
+            - Build tension and chemistry
+                `;
 }
 
 // ==========================================
@@ -379,7 +413,7 @@ export async function callAI(
         history.some(m => SPICY_TRIGGERS.test(m.content));
 
     let targetModel = isSpicyContext ? MODEL_SPICY : MODEL_SMART;
-    console.log(`[AI ROUTER] ${isSpicyContext ? '🌶️ Spicy → DOLPHIN' : '😇 Casual → LLAMA-4'}`);
+    console.log(`[AI ROUTER] ${isSpicyContext ? '🌶️ Spicy → DOLPHIN' : '😇 Casual → LLAMA-4'} `);
 
     // STEP 2: BUILD PROMPTS
     const emotionInstruction = getEmotionInstruction(userMessage);
@@ -409,7 +443,7 @@ export async function callAI(
     try {
         reply = await queryOpenRouter(targetModel, messages);
     } catch (error: any) {
-        console.warn(`[AI] ${targetModel} failed. Trying backup...`);
+        console.warn(`[AI] ${targetModel} failed.Trying backup...`);
         try {
             reply = await queryDeepInfra(MODEL_BACKUP, messages);
         } catch (backupError) {
@@ -445,7 +479,7 @@ async function queryOpenRouter(model: string, messages: ChatMessage[]): Promise<
         },
         {
             headers: {
-                "Authorization": `Bearer ${apiKey}`,
+                "Authorization": `Bearer ${apiKey} `,
                 "HTTP-Referer": "https://bakaiti.app",
                 "X-Title": "Bakaiti"
             },
@@ -468,7 +502,7 @@ async function queryDeepInfra(model: string, messages: ChatMessage[]): Promise<s
             max_tokens: 150
         },
         {
-            headers: { "Authorization": `Bearer ${apiKey}` },
+            headers: { "Authorization": `Bearer ${apiKey} ` },
             timeout: TIMEOUT_MS
         }
     );
@@ -476,20 +510,21 @@ async function queryDeepInfra(model: string, messages: ChatMessage[]): Promise<s
 }
 
 // ==========================================
-// FALLBACKS
+// FALLBACKS (Only used when AI completely fails)
 // ==========================================
 function getRandomFallback(): string {
+    // These are questions that work in ANY context
     const fallbacks = [
-        "haha sahi bola 😂",
-        "acha acha, aur bta",
-        "interesting yaar!",
-        "hmm 🤔 tu bta",
-        "sahi h",
-        "😄 aur kya scene?",
-        "btw tu kaha se h?",
-        "nice yaar",
-        "lol aur?",
-        "aur kya chal rha?",
+        "wait wait, kaha se h tu?",
+        "btw tu abhi kya kar rha?",
+        "college ya job?",
+        "main bore ho rha... tu bta kuch",
+        "ek baat bta, single h?",
+        "aur sunao, kya plans h weekend ke?",
+        "bored hoon yaar, entertain kar",
+        "hmm interesting, aur?",
+        "sahi sahi, tu bta apne baare mein",
+        "acha chal kuch interesting bta",
     ];
     return fallbacks[Math.floor(Math.random() * fallbacks.length)];
 }
