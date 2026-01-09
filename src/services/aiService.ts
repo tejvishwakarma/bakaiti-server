@@ -7,7 +7,7 @@ import axios from 'axios';
 const MODEL_SMART = "meta-llama/llama-4-maverick:free";
 
 // 2. SPICY MODEL (Uncensored): Great for flirting, romance, roleplay. No filters.
-const MODEL_SPICY = "cognitivecomputations/dolphin-mistral-24b-venice-edition:free";
+const MODEL_SPICY = "deepseek/deepseek-chat-v3-0324:free";
 
 // 3. BACKUP (Paid): Use cheap Llama 3 if free tiers fail
 const MODEL_BACKUP = "meta-llama/Meta-Llama-3-8B-Instruct";

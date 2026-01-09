@@ -17,6 +17,7 @@ model User {
   email                String    @unique
   displayName          String?   @map("display_name")
   photoUrl             String?   @map("photo_url")
+  gender               Gender?   // For AI matching
   points               Int       @default(0)
   subscriptionStatus   SubscriptionStatus @default(FREE) @map("subscription_status")
   subscriptionExpiresAt DateTime? @map("subscription_expires_at")
@@ -45,6 +46,11 @@ model User {
   reportsMade          Report[]  @relation("ReportsMade")
 
   @@map("users")
+}
+
+enum Gender {
+  MALE
+  FEMALE
 }
 
 enum SubscriptionStatus {

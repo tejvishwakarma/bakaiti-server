@@ -191,10 +191,34 @@ export function getRandomCharacter(): GhostCharacter {
 }
 
 // ==========================================
+// GET CHARACTER BY PREFERRED GENDER (for opposite-gender matching)
+// ==========================================
+export function getCharacterByGender(preferredGender: 'M' | 'F'): GhostCharacter {
+    const filteredCharacters = ALL_CHARACTERS.filter(c => c.gender === preferredGender);
+    const index = Math.floor(Math.random() * filteredCharacters.length);
+    return filteredCharacters[index];
+}
+
+// Get opposite gender character based on user's gender
+export function getOppositeGenderCharacter(userGender?: string): GhostCharacter {
+    // If user is male, get female character. If female, get male.
+    if (userGender === 'MALE') {
+        return getCharacterByGender('F');
+    } else if (userGender === 'FEMALE') {
+        return getCharacterByGender('M');
+    }
+    // Unknown gender - return random
+    return getRandomCharacter();
+}
+
+// ==========================================
 // GENERATE GHOST PROFILE (with character)
 // ==========================================
-export function generateGhostProfile(preferredMood?: string): GhostProfile {
-    const character = getRandomCharacter();
+export function generateGhostProfile(preferredMood?: string, userGender?: string): GhostProfile {
+    // Get opposite gender character if user gender is provided
+    const character = userGender
+        ? getOppositeGenderCharacter(userGender)
+        : getRandomCharacter();
     const sessionId = `ghost_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
     return {

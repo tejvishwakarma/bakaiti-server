@@ -116,7 +116,9 @@ function startGhostMatchTimeout(
             // Create ghost session
             console.log(`👻 Creating ghost match for user ${user.id}`);
 
-            const ghostProfile = generateGhostProfile(userMood);
+            // Generate ghost profile with opposite gender
+            const userGender = (user as any).gender as string | undefined;
+            const ghostProfile = generateGhostProfile(userMood, userGender);
             const sessionId = `ghost_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
             const moodTheme = MOOD_THEMES[Math.floor(Math.random() * MOOD_THEMES.length)];
 

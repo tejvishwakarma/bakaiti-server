@@ -42,6 +42,7 @@ router.get('/me', authMiddleware, async (req: Request, res: Response) => {
                 email: true,
                 displayName: true,
                 photoUrl: true,
+                gender: true,
                 points: true,
                 subscriptionStatus: true,
                 subscriptionExpiresAt: true,
@@ -104,6 +105,35 @@ router.patch('/me', authMiddleware, async (req: Request, res: Response) => {
     } catch (error) {
         console.error('Update profile error:', error);
         res.status(500).json({ error: 'Failed to update profile' });
+    }
+});
+
+// Update user gender (for AI matching)
+router.put('/gender', authMiddleware, async (req: Request, res: Response) => {
+    try {
+        const { gender } = req.body;
+
+        // Validate gender
+        const validGenders = ['MALE', 'FEMALE'];
+        if (!gender || !validGenders.includes(gender)) {
+            return res.status(400).json({ error: 'Invalid gender. Must be MALE or FEMALE' });
+        }
+
+        const updatedUser = await prisma.user.update({
+            where: { id: req.user!.id },
+            data: { gender },
+            select: {
+                id: true,
+                displayName: true,
+                gender: true,
+            }
+        });
+
+        console.log(`👤 User ${req.user!.id} set gender to: ${gender}`);
+        res.json({ user: updatedUser });
+    } catch (error) {
+        console.error('Update gender error:', error);
+        res.status(500).json({ error: 'Failed to update gender' });
     }
 });
 
