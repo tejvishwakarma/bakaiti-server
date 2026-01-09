@@ -630,28 +630,69 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
                                             ? buildCharacterPrompt(ghostProfile.character)
                                             : undefined;
 
-                                        const aiResponse = await callAI(
+                                        const aiResponses = await callAI(
                                             combinedMessage,
                                             ghostSession.chatHistory,
                                             characterPrompt,
                                             ghostSession.preferredLanguage
                                         );
 
-                                        // Calculate typing delay (for the actual typing)
-                                        const typingDelay = getTypingDelay(aiResponse);
+                                        // FUNCTION TO SEND MESSAGES SEQUENTIALLY
+                                        const sendMessages = async (messages: string[], index = 0) => {
+                                            if (index >= messages.length) {
+                                                socket.emit('partner_typing', { isTyping: false });
+                                                return;
+                                            }
 
-                                        setTimeout(() => {
-                                            socket.emit('partner_typing', { isTyping: false });
-                                            socket.emit('new_message', {
-                                                sessionId,
-                                                senderId: ghostProfile.id,
-                                                message: aiResponse,
-                                                timestamp: Date.now(),
-                                            });
+                                            const msg = messages[index];
+                                            const typingDelay = getTypingDelay(msg);
 
-                                            // Add AI response to history
-                                            ghostSession.chatHistory.push({ role: 'assistant', content: aiResponse });
-                                        }, typingDelay);
+                                            // Show typing again for each message
+                                            if (index > 0) socket.emit('partner_typing', { isTyping: true });
+
+                                            setTimeout(() => {
+                                                // DETECT IMAGE
+                                                if (msg.startsWith('[IMAGE_URL:')) {
+                                                    const imageUrl = msg.replace('[IMAGE_URL:', '').replace(']', '');
+                                                    socket.emit('new_message', {
+                                                        sessionId,
+                                                        senderId: ghostProfile.id,
+                                                        message: "📷 Photo", // Caption
+                                                        imageUrl: imageUrl,
+                                                        type: 'image',
+                                                        timestamp: Date.now(),
+                                                    });
+                                                } else {
+                                                    // Send Text
+                                                    socket.emit('new_message', {
+                                                        sessionId,
+                                                        senderId: ghostProfile.id,
+                                                        message: msg,
+                                                        timestamp: Date.now(),
+                                                    });
+                                                }
+
+                                                // Recurse
+                                                sendMessages(messages, index + 1);
+                                            }, typingDelay);
+
+                                            // Add to history
+                                            ghostSession.chatHistory.push({ role: 'assistant', content: msg });
+
+                                            // If more messages, wait a tiny bit then type next
+                                            if (index < messages.length - 1) {
+                                                setTimeout(() => {
+                                                    sendMessages(messages, index + 1);
+                                                }, 500); // 500ms pause between messages
+                                            } else {
+                                                socket.emit('partner_typing', { isTyping: false });
+                                            }
+
+                                        }; // End sendMessages
+
+                                        // Start sending
+                                        sendMessages(aiResponses);
+
                                     } catch (aiError) {
                                         console.error('AI response error:', aiError);
                                         socket.emit('partner_typing', { isTyping: false });

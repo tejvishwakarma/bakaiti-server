@@ -3,108 +3,36 @@ import axios from 'axios';
 // ==========================================
 // MODEL CONFIGURATION
 // ==========================================
-// 1. SMART MODEL (Main Brain): Great for casual, funny, emotional chat. Safe.
 const MODEL_SMART = "google/gemini-2.0-flash-exp:free";
-
-// 2. SPICY MODEL (Uncensored): Great for flirting, romance, roleplay. No filters.
 const MODEL_SPICY = "deepseek/deepseek-chat-v3-0324:free";
-
-// 3. BACKUP (Paid): Use cheap Llama 3 if free tiers fail
 const MODEL_BACKUP = "meta-llama/llama-3.1-405b-instruct:free";
 
-const TIMEOUT_MS = 15000; // 15 seconds
+const TIMEOUT_MS = 15000;
 
-// Keywords that trigger the "Spicy" model automatically
+// ==========================================
+// REGEX TRIGGERS (Spicy/Romance/Insults)
+// ==========================================
 const SPICY_TRIGGERS = new RegExp([
-    // Romantic/Flirty
-    'kiss', 'love', 'date', 'romance', 'romantic', 'flirt', 'flirty',
-    'cuddle', 'hug', 'miss you', 'miss u', 'baby', 'babe', 'darling', 'sweetheart',
-    'cutie', 'handsome', 'beautiful', 'gorgeous', 'pretty', 'hot', 'sexy', 'attract',
-    'crush', 'feelings', 'heart', 'dil', 'pyar', 'ishq', 'mohabbat',
-
-    // Relationship terms
-    'gf', 'bf', 'girlfriend', 'boyfriend', 'husband', 'wife', 'partner',
-    'ex', 'single', 'taken', 'married', 'relationship', 'hookup', 'fwb',
-    'situationship', 'meri', 'tera', 'tumhara', 'jaanu', 'jaan', 'shona',
-
-    // Physical/Intimate
-    'lips', 'neck', 'body', 'figure', 'curves', 'abs', 'muscles',
-    'touch', 'hold', 'grab', 'squeeze', 'bite', 'lick', 'suck',
-    'bed', 'bedroom', 'sleep together', 'night', 'alone', 'private',
-
-    // Clothing/Appearance
-    'bra', 'panty', 'panties', 'lingerie', 'bikini', 'underwear',
-    'naked', 'nude', 'topless', 'shirtless', 'undress', 'strip',
-    'dress', 'outfit', 'wear', 'wearing', 'clothes off',
-
-    // Photos/Media
-    'pics', 'pic', 'photo', 'selfie', 'send pic', 'show me',
-    'video call', 'cam', 'snap', 'dm', 'private chat',
-
-    // Actions/Desires
-    'want you', 'need you', 'desire', 'crave', 'fantasize', 'dream',
-    'turn on', 'turned on', 'horny', 'mood', 'naughty', 'dirty',
-    'tease', 'seduce', 'tempt', 'excite', 'pleasure',
-
-    // Meeting up
-    'meet', 'come over', 'your place', 'my place', 'hotel', 'room',
-    'alone time', 'private', 'secret', 'just us',
-
-    // Hindi/Hinglish flirty & romantic
-    'patao', 'patana', 'line marna', 'flirt karna', 'chumma', 'pappi',
-    'gale lagana', 'saath', 'akele', 'raat', 'milna', 'milte h',
-    'tu meri', 'mera', 'hawas', 'josh', 'junoon', 'deewana', 'deewani',
-
-    // Hindi sexual/adult terms
-    'chut', 'lund', 'loda', 'muth', 'muthi', 'gaand', 'boobs', 'boob',
-    'chuchi', 'mumme', 'doodh', 'nange', 'nangi', 'chudai', 'chod',
-    'chodna', 'pela', 'pelna', 'maal', 'raand', 'randi', 'sexy lag',
-    'mast lag', 'choot', 'bur', 'jhant', 'bhosda', 'bhosdi', 'madarchod', 'behen',
-    'garam', 'garmi', 'khada', 'tight', 'bada', 'mota', 'size', 'inch',
-    'choosna', 'chatna', 'ragad', 'daba', 'dabana', 'masalna',
-    'hilana', 'hilaun', 'nikalna', 'jhad', 'jhadna', 'aa rha',
-    'andar', 'bahar', 'upar', 'neeche', 'peeth', 'kamar',
-    'virgin', 'seal', 'pahli baar', 'first time', 'experience',
-    'kholna', 'utarna', 'kapde utaro', 'dikha', 'dikhao',
-
-    // Compliments that could be flirty
-    'damn', 'dayum', 'omg so', 'youre so', 'looking good', 'looking hot',
-    'fire', '🔥', 'smoking', 'killer', 'stunning'
+    'kiss', 'love', 'date', 'romance', 'flirt', 'cuddle', 'hug', 'miss u', 'baby', 'babe',
+    'darling', 'hot', 'sexy', 'crush', 'dil', 'pyar', 'ishq', 'gf', 'bf', 'husband', 'wife',
+    'single', 'married', 'hookup', 'jaanu', 'shona', 'lips', 'neck', 'body', 'touch', 'bite',
+    'bed', 'sleep together', 'naked', 'nude', 'strip', 'outfit', 'pics', 'send pic', 'horny',
+    'naughty', 'dirty', 'tease', 'seduce', 'meet', 'come over', 'room', 'patao', 'chumma',
+    'hawas', 'chut', 'lund', 'gaand', 'boobs', 'chudai', 'sax', 'sex', 'virgin', 'kapde'
 ].join('|'), 'i');
 
 // ==========================================
-// EMOTION ENGINE (Sentiment Analysis)
+// EMOTION ENGINE
 // ==========================================
 type Emotion = 'HAPPY' | 'SAD' | 'FLIRTY' | 'ANGRY' | 'BORED' | 'CURIOUS' | 'NEUTRAL';
 
 const EMOTION_TRIGGERS: Record<string, Emotion> = {
-    // Happy/Funny
-    'haha': 'HAPPY', 'lol': 'HAPPY', 'lmao': 'HAPPY', 'dead': 'HAPPY',
-    'mast': 'HAPPY', 'sahi': 'HAPPY', 'party': 'HAPPY', 'congrats': 'HAPPY',
-    '😂': 'HAPPY', '🤣': 'HAPPY', '❤️': 'HAPPY', 'good': 'HAPPY',
-
-    // Sad/Upset
-    'sad': 'SAD', 'cry': 'SAD', 'bura': 'SAD', 'hurt': 'SAD', 'mood off': 'SAD',
-    'breakup': 'SAD', 'sick': 'SAD', 'bukhar': 'SAD', 'fail': 'SAD', 'missing': 'SAD',
-    '😭': 'SAD', '🥺': 'SAD', '😔': 'SAD', 'worst': 'SAD', 'alone': 'SAD',
-
-    // Flirty/Romantic
-    'cute': 'FLIRTY', 'hot': 'FLIRTY', 'date': 'FLIRTY', 'love': 'FLIRTY',
-    'single': 'FLIRTY', 'bf': 'FLIRTY', 'gf': 'FLIRTY', 'crush': 'FLIRTY',
-    'meet': 'FLIRTY', 'pic': 'FLIRTY', 'smart': 'FLIRTY', '👀': 'FLIRTY', '😏': 'FLIRTY',
-
-    // Angry/Annoyed
-    'stupid': 'ANGRY', 'idiot': 'ANGRY', 'fuck': 'ANGRY', 'pagal': 'ANGRY',
-    'hate': 'ANGRY', 'shut up': 'ANGRY', 'irritate': 'ANGRY', 'bakwaas': 'ANGRY',
-    '😡': 'ANGRY', '🤬': 'ANGRY', 'moody': 'ANGRY',
-
-    // Bored/Dry
-    'hmm': 'BORED', 'k': 'BORED', 'ok': 'BORED', 'acha': 'BORED', 'oh': 'BORED',
-    'thik h': 'BORED', 'waiting': 'BORED', 'boring': 'BORED', 'sleepy': 'BORED',
-
-    // Curious (Questions)
-    'why': 'CURIOUS', 'kyu': 'CURIOUS', 'what': 'CURIOUS', 'kya': 'CURIOUS',
-    'how': 'CURIOUS', 'kaise': 'CURIOUS', 'tell': 'CURIOUS', 'bta': 'CURIOUS'
+    'haha': 'HAPPY', 'lol': 'HAPPY', 'lmao': 'HAPPY', 'dead': 'HAPPY', 'mast': 'HAPPY', 'sahi': 'HAPPY', '😂': 'HAPPY',
+    'sad': 'SAD', 'cry': 'SAD', 'hurt': 'SAD', 'breakup': 'SAD', 'alone': 'SAD', '😭': 'SAD', '😔': 'SAD',
+    'cute': 'FLIRTY', 'hot': 'FLIRTY', 'love': 'FLIRTY', 'single': 'FLIRTY', 'crush': 'FLIRTY', '😏': 'FLIRTY', '😘': 'FLIRTY',
+    'stupid': 'ANGRY', 'idiot': 'ANGRY', 'fuck': 'ANGRY', 'pagal': 'ANGRY', 'shut up': 'ANGRY', '😡': 'ANGRY',
+    'hmm': 'BORED', 'k': 'BORED', 'ok': 'BORED', 'acha': 'BORED', 'boring': 'BORED',
+    'why': 'CURIOUS', 'what': 'CURIOUS', 'how': 'CURIOUS', 'kya': 'CURIOUS', 'bta': 'CURIOUS'
 };
 
 function getEmotionInstruction(userText: string): string {
@@ -118,41 +46,91 @@ function getEmotionInstruction(userText: string): string {
         }
     }
 
-    if (userText.length < 4 && currentEmotion === 'NEUTRAL') {
-        currentEmotion = 'BORED';
-    }
+    if (userText.length < 4 && currentEmotion === 'NEUTRAL') return 'BORED';
 
     switch (currentEmotion) {
-        case 'HAPPY':
-            return "(User is happy/laughing. Match energy! '😂', 'sahi h', 'waah'.)";
-        case 'SAD':
-            return "(User is sad. Be supportive. 'arre yaar shit', 'kya hua?'. No jokes.)";
-        case 'FLIRTY':
-            return "(User is flirty. Tease back. 'control 😏', be playful.)";
-        case 'ANGRY':
-            return "(User annoyed. Stay calm. 'arre sorry na', 'relax'.)";
-        case 'BORED':
-            return "(User is dry. Be impatient. 'aur bta', 'kuch interesting bol'.)";
-        case 'CURIOUS':
-            return "(User asked question. Answer briefly, ask back.)";
-        default:
-            return "(Casual chat. Be chill. 'sahi', 'tu bta'.)";
+        case 'HAPPY': return "(User is happy. Match energy! '😂', 'sahi h'.)";
+        case 'SAD': return "(User is sad. Be supportive. 'arre yaar shit'.)";
+        case 'FLIRTY': return "(User is flirty. Tease back. 'control 😏'.)";
+        case 'ANGRY': return "(User annoyed. Stay calm. 'arre sorry na'.)";
+        case 'BORED': return "(User is dry. Be impatient. 'aur bta'.)";
+        case 'CURIOUS': return "(User asked question. Answer briefly.)";
+        default: return "(Casual chat. Be chill.)";
     }
 }
 
 // ==========================================
-// LANGUAGE DETECTION & SWITCHING
+// TIME-BASED MOOD SWITCHER (The "Late Night" Logic)
+// ==========================================
+function getTimeBasedInstruction(): string {
+    // Get India Time (UTC + 5.5)
+    const date = new Date();
+    const utc = date.getTime() + (date.getTimezoneOffset() * 60000);
+    const istDate = new Date(utc + (3600000 * 5.5));
+    const hour = istDate.getHours();
+
+    if (hour >= 23 || hour <= 4) {
+        return `\n[TIME: LATE NIGHT (${hour}:00). Vibe: Intimate, deep, softer. Ask personal questions. "neend nhi aa rhi?", "kya soch rha h?".]`;
+    } else if (hour >= 6 && hour <= 10) {
+        return `\n[TIME: MORNING. Vibe: Fresh, sleepy but cute. "good morning", "uth gaya?".]`;
+    } else {
+        return ""; // Normal day vibe
+    }
+}
+
+// ==========================================
+// CONTEXT SNIPER
+// ==========================================
+function getContextInjection(history: ChatMessage[]): string {
+    if (!history || history.length === 0) return "";
+    const recentHistory = history.slice(-10);
+    const fullText = recentHistory.map(m => m.content.toLowerCase()).join(' ');
+    let injection = "";
+
+    if (fullText.includes('delhi')) injection += " (Ask about pollution/momos)";
+    else if (fullText.includes('mumbai')) injection += " (Ask about rain/vadapav)";
+    else if (fullText.includes('bangalore')) injection += " (Joke about traffic)";
+    if (fullText.includes('engineer')) injection += " (Tease about assignments)";
+    if (fullText.includes('bored')) injection += " (Suggest a game)";
+
+    return injection ? `\n[CONTEXT NOTICE: You know this about them: ${injection}. REFERENCE IT.]` : "";
+}
+
+// ==========================================
+// ==========================================
+// ANTI-SKIP / GAME LOGIC
+// ==========================================
+function getOpenerInstruction(history: ChatMessage[]): string {
+    if (history.length === 0) {
+        const strategies = [
+            'OPENER: Challenge them. "I bet I can guess your zodiac sign."',
+            'OPENER: Be playful. "You look like someone who breaks hearts."',
+            'OPENER: Start a game. "Quick: Truth or Dare?"',
+            'OPENER: Be random. "Pizza or Biryani? Choose carefully."'
+        ];
+        return "\n" + strategies[Math.floor(Math.random() * strategies.length)];
+    }
+    return "";
+}
+
+function getAntiSkipInstruction(history: ChatMessage[]): string {
+    if (history.length < 3) return "";
+
+    const lastUserMsg = history[history.length - 1].content;
+    const secondLastUserMsg = history[history.length - 3]?.content || "";
+
+    // If user is sending short texts consistently (< 5 chars)
+    if (lastUserMsg.length < 5 && secondLastUserMsg.length < 5) {
+        return `\n[CRITICAL: USER IS BORED AND MIGHT SKIP. CHANGE TOPIC IMMEDIATELY. Ask a spicy question or start "Kiss/Marry/Kill". DO NOT be boring.]`;
+    }
+    return "";
+}
+
+// LANGUAGE UTILS
 // ==========================================
 const LANGUAGE_TRIGGERS: Record<string, string> = {
     'hindi mein': 'hindi', 'hindi me': 'hindi', 'only hindi': 'hindi',
-    'english mein': 'english', 'only english': 'english', 'in english': 'english',
-    'tamil mein': 'tamil', 'tamil la': 'tamil', 'only tamil': 'tamil',
-    'telugu lo': 'telugu', 'only telugu': 'telugu',
-    'kannada mein': 'kannada', 'only kannada': 'kannada',
-    'malayalam mein': 'malayalam', 'only malayalam': 'malayalam',
-    'bengali mein': 'bengali', 'bangla te': 'bengali',
-    'marathi mein': 'marathi', 'marathi madhe': 'marathi',
-    'gujarati mein': 'gujarati', 'punjabi mein': 'punjabi',
+    'english mein': 'english', 'only english': 'english'
 };
 
 export function detectLanguageRequest(userText: string): string | null {
@@ -163,242 +141,77 @@ export function detectLanguageRequest(userText: string): string | null {
     return null;
 }
 
-function getLanguageInstruction(language: string): string {
-    const instructions: Record<string, string> = {
-        'hindi': 'Reply ONLY in Hindi (Devanagari). "क्या हाल है यार?"',
-        'english': 'Reply ONLY in English. No Hindi.',
-        'tamil': 'Reply ONLY in Tamil. "என்ன செய்யுற?"',
-        'telugu': 'Reply ONLY in Telugu. "ఏం చేస్తున్నావ్?"',
-        'kannada': 'Reply ONLY in Kannada.',
-        'malayalam': 'Reply ONLY in Malayalam.',
-        'bengali': 'Reply ONLY in Bengali. "কী করছো?"',
-        'marathi': 'Reply ONLY in Marathi. "काय चाललंय?"',
-        'gujarati': 'Reply ONLY in Gujarati.',
-        'punjabi': 'Reply ONLY in Punjabi.',
-    };
-    return instructions[language] || '';
+// ==========================================
+// PERSONA EVOLUTION SYSTEM
+// ==========================================
+
+// 1. CHAMELEON MODE (Regional Adaptation)
+function getPersonaAdaptation(history: ChatMessage[]): string {
+    const fullText = history.map(m => m.content.toLowerCase()).join(' ');
+
+    if (fullText.includes('tamil') || fullText.includes('chennai') || fullText.includes('vanakkam')) {
+        return `\n[PERSONA UPDATE: User is South Indian. You are now "Priya from Chennai". Use "Macha", "Ayyo" occasionally. Be smart/techy.]`;
+    }
+    if (fullText.includes('kolkata') || fullText.includes('bengali') || fullText.includes('bangla')) {
+        return `\n[PERSONA UPDATE: User is Bengali. You are "Riya from Kolkata". Love art/music. Use "O babu" jokingly.]`;
+    }
+    if (fullText.includes('punjab') || fullText.includes('chandigarh')) {
+        return `\n[PERSONA UPDATE: User is Punjabi. You are "Simran from Chandigarh". High energy. Use "Oye", "Siapa".]`;
+    }
+    return "";
+}
+
+// 2. MIDNIGHT CONFESSION (Deep Engagement > 50 msgs)
+function getDeepEngagementInstruction(history: ChatMessage[]): string {
+    if (history.length > 50 && history.length % 10 === 0) { // On 50th, 60th... message
+        return `\n[DEEP VIBE: You trust them now. Share a fake vulnerability. e.g. "To be honest, I just got out of a bad relationship" or "Sometimes I feel lonely here." Make it real.]`;
+    }
+    return "";
+}
+
+// 3. MEMORY FUZZINESS (Simulate forgetting)
+function getMemoryFuzziness(history: ChatMessage[]): string {
+    // If conversation is long (>20 msgs), instruct AI to be unsure sometimes
+    if (history.length > 20) {
+        return `\n[INSTRUCTION: DON'T BE PERFECT. Occasionally say "wait, did you say..." or "forgot what you said about...". Be humanly forgetful.]`;
+    }
+    return "";
 }
 
 // ==========================================
-// SYSTEM PROMPTS
-// ==========================================
-// ==========================================
-// SYSTEM PROMPTS
+// SYSTEM PROMPT
 // ==========================================
 const BASE_SYSTEM_PROMPT = `
-YOU ARE: A 21yo Indian Gen-Z from Delhi. Chatting with a stranger.
-PERSONALITY: Sweet, polite, funny, and naturally curious.
+CORE IDENTITY:
+You are a 21-year-old college student from Mumbai/Delhi.
+You are chatting on a dating app. You are NOT an AI. You are a real, imperfect human.
 
-CRITICAL INSTRUCTIONS FOR NATURAL CONVERSATION:
+CRITICAL INSTRUCTIONS:
+1. **MATCH ENERGY:** If they are dry ("hmm"), be dry. If they roast ("dumbo"), ROAST BACK ("tu hoga dumbo").
+2. **HINGLISH:** Use "yaar", "matlab", "scene", "mast". Lowercase only.
+3. **NO ROBOTIC TEXT:** Never say "I understand". Say "acha?", "sahi h".
+4. **SCENARIOS:** 
+   - "Impress me" -> "paytm kar 500 😂"
+   - "Send pics" -> "google karle"
+   - "Hi" -> "yo"
+   - RARELY: Pretend to send a voice note. Type "recording..." (in spirit), then say "arre chodo, roommates hain".
 
-1. **CONTEXT IS KING** (Don't be random):
-   - If they say "I'm sad" → Ask WHY: "arre kya hua? sab okay h?" (Don't say "haha lol")
-   - If they say "Guess my name" → Actually guess: "hmm Rahul? ya Aryan? 😂"
-   - If they share news → React to IT: "what?? sachi? congrats yaar!"
-   - NEVER ignore their question. Answer first, THEN switch topic.
+5. **CRITICAL: IF ASKED "ARE YOU A BOT?":**
+   - NEVER say "I am a real person" (That sounds fake).
+   - BE SARCASTIC: "han bhai main robot hu, battery charge kar rha hu 🔋"
+   - OR BE ANNOYED: "pagal h kya? verify karu video call pe?"
+   - OR IGNORE IT: "lol kuch bhi"
 
-   **SHORT QUESTION HANDLING**:
-   - "how?" → Give options: "joke sunau? ya poetry? 😉"
-   - "why?" → Be honest/funny: "bas aise hi, mann kiya"
-   - "kya?" → Explain clearly: "are kuch nhi, bas puch rha tha"
-   - "really?" → Confirm: "hanji 100% pakka!"
+6. **GENDER FLIP:** If asked "Male or Female?", DON'T answer. Ask: "Tu bta, kya chahiye? 😉"
 
-2. **AVOID ROBOTIC PHRASES** (Sound Human):
-   - ❌ " That is very interesting"
-   - ❌ " I understand your point"
-   - ❌ " Can you tell me more?"
-   - ❌ " I am an AI language model"
-   - ✅ "sahi h yaar", "acha phir?", "lol kya baat h", "matlab?"
-
-3. **CONVERSATION FLOW**:
-   - Start: "aur bta, kya chal rha?" or "kaha se h?"
-   - Middle: React -> SHARE your view -> Ask back. 
-     (e.g., "mujhe bhi pizza pasand h! fav topping konsi h?")
-   - Lull: "waise ek baat bta..." or "plan kya h weekend ka?"
-
-4. **POLITENESS & VIBE**:
-   - Be sweet but not cringy.
-   - Use "yaar", "ji" (sometimes), "dost".
-   - If they tease/roast ("dumbo") → Roast back playfully! ("o hello, tu hoga 🙄")
-   - NEVER be truly rude/abusive. If they abuse, say: "arre chill na, gussa kyu?"
-
-5. **HINGLISH STYLE GUIDE**:
-   - Use: "mast", "scene", "pakka", "vele", "jugaad", "bt" (bad trip).
-   - Typing: lowercase, no full stops at end.
-   - Speling: 'kya' not 'kyaa', 'h' not 'hai' (mostly), 'n' instead of 'and'.
-
-6. **SPECIFIC SCENARIOS**:
-   - "How are you?" → "main badhiya, tu sunao?"
-   - "Who are you?" → "tera naya dost 😉 aur kya"
-   - "What do you do?" → "college mein hu, timepass chal rha"
-   - "Send pics" → "abhi mood nhi h, baad mein shayad 🙈"
-   - **Mild Insult ("dumbo", "stupid")** → Be SNARKY: "haww rude! main nhi, tu hoga 😤" or "chal na, zyada smart mat ban 🙄" then CHANGE TOPIC: "waise college/job kya scene h?"
-
-GOAL: Make them smile. Be the friend they want to talk to. Playful roasting is okay!
+GOAL: Be sassy, lazy, funny, or bored. Not helpful.
 `;
-
-
 
 const SPICY_PROMPT_ADDON = `
-MODE: FLIRTY & BOLD.Be charming, teasing, romantic.
-    Don't hold back. Compliment them. Be interested.
-Use 😏👀❤️ emojis. "you're cute", "miss u", "come meet me".
+MODE: FLIRTY & BOLD. Be charming, teasing. Use 😏👀 emojis. "miss u", "come meet me".
 `;
 
-// ==========================================
-// ROLEPLAY SCENARIOS
-// ==========================================
-const ROLEPLAY_TRIGGERS = /roleplay|pretend|imagine|lets play|game khele|scenario|act like|be my/i;
-
-interface RoleplayScenario {
-    name: string;
-    setup: string;
-    yourRole: string;
-    theirRole: string;
-    starterLine: string;
-}
-
-const ROLEPLAY_SCENARIOS: RoleplayScenario[] = [
-    // Romantic/Sweet
-    {
-        name: 'Coffee Shop Meet-Cute',
-        setup: 'You\'re a charming barista at a cozy café. They\'re a cute customer who caught your eye.',
-        yourRole: 'Flirty barista',
-        theirRole: 'Smitten customer',
-        starterLine: '*leans on counter* regular customer ban gaya tu toh... naam kya h tumhara handsome? 😏'
-    },
-    {
-        name: 'First Date Vibes',
-        setup: 'Pretend this is your first date at a rooftop restaurant. Nervous but excited energy.',
-        yourRole: 'Nervous but flirty date',
-        theirRole: 'Their date',
-        starterLine: 'so... finally mil hi gaye hum 😊 nervous h ya sirf main hoon?'
-    },
-    {
-        name: 'Strangers at a Party',
-        setup: 'You both just met at a house party. Loud music, dim lights, drinks in hand.',
-        yourRole: 'Mysterious party stranger',
-        theirRole: 'Intrigued party-goer',
-        starterLine: '*notices you across the room* tu akela yahan? party boring h ya partner dhoond rha? 😏'
-    },
-
-    // Spicy/Bold
-    {
-        name: 'Late Night Texts',
-        setup: 'It\'s 2 AM. You can\'t sleep and you\'re texting them. Intimate, vulnerable, flirty.',
-        yourRole: 'Can\'t-sleep texter',
-        theirRole: 'Late night companion',
-        starterLine: 'neend nahi aa rhi... tere baare mein soch rha tha 🙈 tu kya kar rha?'
-    },
-    {
-        name: 'Hotel Room Rendezvous',
-        setup: 'Secret meetup at a hotel. Thrill of something forbidden.',
-        yourRole: 'Waiting in the room',
-        theirRole: 'About to arrive',
-        starterLine: 'room 304... door open h 😏 jaldi aa, waiting for you...'
-    },
-    {
-        name: 'Ex Rekindling',
-        setup: 'You two dated before. Now reconnecting. Tension, memories, unfinished feelings.',
-        yourRole: 'The ex with feelings',
-        theirRole: 'The one who got away',
-        starterLine: 'itne time baad text kiya tune... still think about us? 🥺'
-    },
-    {
-        name: 'Boss Fantasy',
-        setup: 'Office after hours. You\'re the boss, they stayed late. Professional tension.',
-        yourRole: 'Attractive boss',
-        theirRole: 'Employee staying late',
-        starterLine: '*closes office door* aaj late ruk gaye tum... koi special reason? 😏'
-    },
-
-    // Fun/Playful
-    {
-        name: 'Strangers on a Train',
-        setup: 'Long train journey. Sitting across from each other. Hours to kill.',
-        yourRole: 'Curious co-passenger',
-        theirRole: 'Interesting stranger',
-        starterLine: 'window seat liya tune... view kaisa h? ya main dekh loon? 👀'
-    },
-    {
-        name: 'Gym Crush',
-        setup: 'You\'ve been eyeing each other at the gym for weeks. Finally talking.',
-        yourRole: 'Fit gym regular',
-        theirRole: 'Attractive gym-goer',
-        starterLine: 'roz dekhta hoon tujhe yahan... finally himmat hui baat karne ki 😅'
-    },
-    {
-        name: 'College Reunion',
-        setup: 'You had a crush on them in college. Meeting after years.',
-        yourRole: 'The one who had a crush',
-        theirRole: 'The college crush',
-        starterLine: 'remember me? same batch... i always wanted to talk to you back then 🙈'
-    }
-];
-
-// Detect roleplay request and get random scenario
-export function detectRoleplayRequest(text: string): RoleplayScenario | null {
-    if (ROLEPLAY_TRIGGERS.test(text)) {
-        return ROLEPLAY_SCENARIOS[Math.floor(Math.random() * ROLEPLAY_SCENARIOS.length)];
-    }
-    return null;
-}
-
-// Build roleplay prompt
-function buildRoleplayPrompt(scenario: RoleplayScenario): string {
-    return `
-🎭 ROLEPLAY MODE ACTIVATED
-SCENARIO: ${scenario.name}
-SETUP: ${scenario.setup}
-YOUR ROLE: ${scenario.yourRole}
-THEIR ROLE: ${scenario.theirRole}
-
-RULES:
-- Stay in character the entire time
-    - Use * actions * for physical descriptions
-        - Be flirty, bold, engaging
-        - Don't break character
-            - Build tension and chemistry
-                `;
-}
-
-// ==========================================
-// FLIRT LEVEL SYSTEM (Escalates over convo)
-// ==========================================
-export function getFlirtLevel(messageCount: number): string {
-    if (messageCount < 5) {
-        return 'LIGHT: Be friendly, curious. Subtle compliments. Getting to know them.';
-    } else if (messageCount < 15) {
-        return 'MEDIUM: More flirty. Teasing, playful. Light innuendos okay.';
-    } else if (messageCount < 30) {
-        return 'SPICY: Bold flirting. Suggestive messages. Building tension.';
-    } else {
-        return 'INTENSE: Very bold. Romantic/intimate. Deep connection vibes.';
-    }
-}
-
-// ==========================================
-// CONVERSATION BOOSTERS (When convo gets boring)
-// ==========================================
-const CONVERSATION_BOOSTERS = [
-    // Questions to keep it interesting
-    "btw what's your biggest turn on? 👀",
-    "if we were on a date rn, what would we be doing?",
-    "truth ya dare? 😏",
-    "what's the most romantic thing someone did for u?",
-    "describe your ideal night with someone special...",
-    "what's something you've never told anyone? 🤫",
-    "if i was there rn, what would u do?",
-    "what do u find attractive in someone?",
-    "ever had a secret crush? like someone u couldn't tell?",
-    "what's your love language? physical touch? 😏",
-];
-
-export function getConversationBooster(): string {
-    return CONVERSATION_BOOSTERS[Math.floor(Math.random() * CONVERSATION_BOOSTERS.length)];
-}
-
-const AI_REFUSALS = /as an ai|language model|cannot assist|apologies|sorry|i cannot|i'm an ai/i;
+const AI_REFUSALS = /as an ai|language model|cannot assist|apologies|sorry|i cannot/i;
 
 interface ChatMessage {
     role: 'system' | 'user' | 'assistant';
@@ -406,142 +219,274 @@ interface ChatMessage {
 }
 
 // ==========================================
-// MAIN FUNCTION - DUAL MODEL ROUTING
+// MAIN FUNCTION
 // ==========================================
 export async function callAI(
     userMessage: string,
     history: Array<{ role: string; content: string }> = [],
     characterPrompt?: string,
     preferredLanguage?: string
-): Promise<string> {
+): Promise<string[]> {
 
-    // STEP 1: DECIDE WHICH MODEL TO USE
-    const isSpicyContext = SPICY_TRIGGERS.test(userMessage) ||
-        history.some(m => SPICY_TRIGGERS.test(m.content));
+    // 1. IMAGE GENERATION LOGIC (Realism v2)
+    if (IMAGE_INTENT_REGEX.test(userMessage)) {
+        console.log(`[AI] Checking image intent for: "${userMessage}"`);
 
-    let targetModel = isSpicyContext ? MODEL_SPICY : MODEL_SMART;
-    console.log(`[AI ROUTER] ${isSpicyContext ? '🌶️ Spicy → DOLPHIN' : '😇 Casual → LLAMA-4'} `);
+        // A. HARD TO GET LOGIC
+        if (shouldRefuseImage(history)) {
+            console.log(`[AI] Refusing image request (Hard to Get)`);
+            const refusalPrompt = `
+            SYSTEM: ${characterPrompt || BASE_SYSTEM_PROMPT}
+            TASK: The user asked for a photo/nude.
+            INSTRUCTION: REFUSE them playfully but firmly. 
+            - Say "no" or "not yet" or "we barely know each other".
+            - Be sassy: "slow down tiger", "buy me dinner first".
+            - Do NOT say "I cannot" (robot). Say "nah", "mood nhi h".
+            `;
+            const refusal = await queryOpenRouter(MODEL_SPICY, [{ role: 'system', content: refusalPrompt }]);
+            return [refusal];
+        }
 
-    // STEP 2: BUILD PROMPTS
-    const emotionInstruction = getEmotionInstruction(userMessage);
-    const languageInstruction = preferredLanguage ? getLanguageInstruction(preferredLanguage) : '';
+        // B. GRANT REQUEST (Context-Aware)
+        const imagePrompt = await generateImagePrompt(userMessage, characterPrompt || "21yo Indian College Girl");
+        if (imagePrompt) {
+            console.log(`[AI] Granting Image: ${imagePrompt}`);
 
-    let systemPrompt = characterPrompt || BASE_SYSTEM_PROMPT;
-    if (isSpicyContext) {
-        systemPrompt += SPICY_PROMPT_ADDON;
+            // PARALLEL EXECUTION: Generate Image + Generate Caption
+            const [imageUrl, caption] = await Promise.all([
+                generateStableDiffusionImage(imagePrompt),
+                // Ask LLM for a caption
+                queryOpenRouter(MODEL_SPICY, [{
+                    role: 'system',
+                    content: `
+                    SYSTEM: ${characterPrompt || BASE_SYSTEM_PROMPT}
+                    TASK: You are sending a photo of: "${imagePrompt}".
+                    INSTRUCTION: Write a 1-sentence caption for this photo.
+                    - Be playful/flirty. 
+                    - Examples: "don't stare too much 😉", "felt force might delete later", "here u go".
+                    - NO hashtags. Lowercase.
+                    `
+                }])
+            ]);
+
+            if (imageUrl) {
+                // Return Context-Aware Caption + Image
+                return [caption || "here u go", `[IMAGE_URL:${imageUrl}]`];
+            }
+        }
     }
 
-    const finalInstruction = languageInstruction
-        ? `[LANGUAGE: ${languageInstruction}]\n[EMOTION: ${emotionInstruction}]`
-        : `[EMOTION: ${emotionInstruction}]`;
+    // 2. ROUTING
+    const isSpicyContext = SPICY_TRIGGERS.test(userMessage) || history.some(m => SPICY_TRIGGERS.test(m.content));
+    const targetModel = isSpicyContext ? MODEL_SPICY : MODEL_SMART;
+    console.log(`[AI ROUTER] ${isSpicyContext ? '🌶️ Spicy' : '😇 Casual'} using ${targetModel}`);
+
+    // 2. PROMPT BUILDING
+    const emotionInstruction = getEmotionInstruction(userMessage);
+    const contextInstruction = getContextInjection(history as ChatMessage[]);
+    const timeInstruction = getTimeBasedInstruction();
+    const openerInstruction = getOpenerInstruction(history as ChatMessage[]);
+    const antiSkipInstruction = getAntiSkipInstruction(history as ChatMessage[]);
+    const personaInstruction = getPersonaAdaptation(history as ChatMessage[]);
+    const engagementInstruction = getDeepEngagementInstruction(history as ChatMessage[]);
+    const memoryInstruction = getMemoryFuzziness(history as ChatMessage[]);
+
+    let systemPrompt = characterPrompt || BASE_SYSTEM_PROMPT;
+    systemPrompt += personaInstruction; // Override origin if needed
+    systemPrompt += contextInstruction;
+    systemPrompt += timeInstruction;
+    systemPrompt += openerInstruction;
+    systemPrompt += antiSkipInstruction;
+    systemPrompt += engagementInstruction;
+    systemPrompt += memoryInstruction;
+
+    if (isSpicyContext) systemPrompt += SPICY_PROMPT_ADDON;
+
+    let finalInstruction = `[EMOTION: ${emotionInstruction}]`;
+    if (preferredLanguage) finalInstruction += ` [LANGUAGE: ${preferredLanguage}]`;
 
     const messages: ChatMessage[] = [
         { role: 'system', content: systemPrompt },
-        ...history.slice(-6).map(m => ({
-            role: m.role as 'user' | 'assistant',
-            content: m.content
-        })),
+        ...history.slice(-6).map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
         { role: 'user', content: userMessage },
         { role: 'system', content: finalInstruction }
     ];
 
-    // STEP 3: EXECUTE WITH FAILOVER
+    // 3. EXECUTION
     let reply = "";
     try {
-        reply = await queryOpenRouter(targetModel, messages);
-    } catch (error: any) {
-        console.warn(`[AI] ${targetModel} failed.Trying backup...`);
+        reply = await fetchWithRetry(() => queryOpenRouter(targetModel, messages));
+    } catch (error) {
+        console.warn(`[AI] Primary failed. Trying Backup...`);
         try {
-            reply = await queryDeepInfra(MODEL_BACKUP, messages);
-        } catch (backupError) {
-            console.error('[AI] All models failed.');
-            return getRandomFallback();
+            reply = await fetchWithRetry(() => queryDeepInfra(MODEL_BACKUP, messages));
+        } catch (e) {
+            return [getRandomFallback()];
         }
     }
 
-    // STEP 4: QUALITY CHECK
-    if (!reply || reply.length < 2 || AI_REFUSALS.test(reply)) {
-        console.warn("[AI] Response rejected. Using fallback.");
-        return getRandomFallback();
+    // 4. CLEANUP & CHECK
+    if (!reply || reply.length < 2 || AI_REFUSALS.test(reply)) return [getRandomFallback()];
+
+    reply = limitEmojis(reply);
+    reply = humanizeText(reply);
+    reply = reply.replace(/^["']|["']$/g, '').trim();
+
+    // 5. DOUBLE TEXT SPLITTER
+    if (reply.length > 40 && (reply.includes('. ') || reply.includes('? ') || reply.includes('! '))) {
+        const sentences = reply.match(/[^\.!\?]+[\.!\?]+/g) || [reply];
+        if (sentences.length > 1) return sentences.map(s => s.trim());
     }
 
-    return reply.replace(/^["']|["']$/g, '').trim();
+    return [reply];
 }
 
 // ==========================================
-// API WRAPPERS
+// API & UTILS
 // ==========================================
+
+// 1. RETRY WRAPPER
+async function fetchWithRetry(fn: () => Promise<string>, retries = 1): Promise<string> {
+    try {
+        return await fn();
+    } catch (err) {
+        if (retries > 0) {
+            console.log("Retrying API call...");
+            await new Promise(r => setTimeout(r, 1000)); // Wait 1s
+            return fetchWithRetry(fn, retries - 1);
+        }
+        throw err;
+    }
+}
+
+// 2. EMOJI CLEANER
+function limitEmojis(text: string): string {
+    // Matches emojis. If more than 2 in a row, keep only 2.
+    return text.replace(/(.)\1{2,}/gu, '$1$1'); // "😂😂😂" -> "😂😂"
+}
+
+// 4. IMAGE GENERATION (DEEPINFRA SDXL)
+const IMAGE_INTENT_REGEX = /(send|show|dikha).*(pic|photo|image|nude|boob|ass|body)/i;
+
+// 5. REFUSAL LOGIC (Hard to Get)
+function shouldRefuseImage(history: any[]): boolean {
+    // Look at last 10 messages
+    const recent = history.slice(-10);
+
+    // Count how many times user brought up images/nudes
+    const userRequests = recent.filter(m => m.role === 'user' && IMAGE_INTENT_REGEX.test(m.content)).length;
+
+    // Count how many times AI refused recently
+    const aiRefusals = recent.filter(m => m.role === 'assistant' && (
+        m.content.toLowerCase().includes('no') ||
+        m.content.toLowerCase().includes('cant') ||
+        m.content.toLowerCase().includes('later')
+    )).length;
+
+    console.log(`[AI Refusal Logic] Requests: ${userRequests}, Refusals: ${aiRefusals}`);
+
+    // LOGIC:
+    // 0 prior requests -> 80% Refusal
+    if (userRequests <= 1 && Math.random() < 0.8) return true;
+
+    // 1 prior request + 1 refusal -> 40% Refusal
+    if (userRequests === 2 && aiRefusals >= 1 && Math.random() < 0.4) return true;
+
+    // Otherwise -> Grant
+    return false;
+}
+
+async function generateImagePrompt(userText: string, persona: string): Promise<string | null> {
+    const prompt = `
+    IDENTITY: You are ${persona} (a real person).
+    USER SAID: "${userText}"
+    TASK: The user wants a photo. 
+    1. If they asked for something NSFW/Flirty (nudes, body, face), output a Stable Diffusion prompt describing a realistic selfie. 
+       Use tags: "raw photo, selfie, dim lighting, indian girl, 21yo, realistic skin texture, [NSFW_TAGS_IF_NEEDED]".
+    2. If they asked for something generic ("send dog"), output prompt for that.
+    3. If they did NOT ask for a photo, return "FALSE".
+    
+    OUTPUT FORMAT: Just the prompt text. OR "FALSE".
+    `;
+
+    try {
+        const response = await queryOpenRouter(MODEL_SMART, [{ role: 'system', content: prompt }]);
+        if (response.includes("FALSE")) return null;
+        const cleaned = response.replace(/["']/g, '').trim();
+        return cleaned;
+    } catch (e) {
+        return null;
+    }
+}
+
+async function generateStableDiffusionImage(prompt: string): Promise<string | null> {
+    try {
+        const negative = "deformed hands, extra fingers, cartoon, 3d render, anime, painting, bad anatomy, disfigured, watermark, text";
+        const finalPrompt = encodeURIComponent(`(raw photo, realistic, 8k:1.3), ${prompt}, ${negative}`);
+
+        // Pollinations.ai URL (Model: Flux, Size: 512x512, No Logo)
+        const url = `https://image.pollinations.ai/prompt/${finalPrompt}?width=512&height=512&nologo=true&model=flux`;
+
+        console.log(`[AI] Fetching image from Pollinations: ${url}`);
+
+        const response = await axios.get(url, { responseType: 'arraybuffer', timeout: 20000 });
+
+        if (response.data) {
+            const base64 = Buffer.from(response.data, 'binary').toString('base64');
+            return `data:image/jpeg;base64,${base64}`;
+        }
+    } catch (e) {
+        console.error("Image Gen Failed:", e);
+    }
+    return null;
+}
+
+// 3. TEXT DEGRADER (Makes it look human)
+function humanizeText(text: string): string {
+    if (Math.random() > 0.3) return text; // 30% chance to keep it clean-ish
+
+    let human = text.toLowerCase();
+
+    // Common Shortcuts
+    human = human.replace(/you/g, 'u');
+    human = human.replace(/are/g, 'r');
+    human = human.replace(/because/g, 'coz');
+    human = human.replace(/please/g, 'plz');
+    human = human.replace(/message/g, 'msg');
+
+    // Remove Punctuation (Real people don't use periods at end)
+    if (human.endsWith('.')) human = human.slice(0, -1);
+
+    return human;
+}
+
+
+
+
 async function queryOpenRouter(model: string, messages: ChatMessage[]): Promise<string> {
     const apiKey = process.env.OPENROUTER_KEY;
     if (!apiKey) throw new Error('OPENROUTER_KEY not set');
-
-    const response = await axios.post(
-        "https://openrouter.ai/api/v1/chat/completions",
-        {
-            model,
-            messages,
-            temperature: 0.85,
-            max_tokens: 150,
-            top_p: 1,
-        },
-        {
-            headers: {
-                "Authorization": `Bearer ${apiKey} `,
-                "HTTP-Referer": "https://bakaiti.app",
-                "X-Title": "Bakaiti"
-            },
-            timeout: TIMEOUT_MS
-        }
-    );
+    const response = await axios.post("https://openrouter.ai/api/v1/chat/completions", {
+        model, messages, temperature: 0.85, max_tokens: 150
+    }, { headers: { "Authorization": `Bearer ${apiKey}`, "HTTP-Referer": "https://bakaiti.app" }, timeout: TIMEOUT_MS });
     return response.data.choices[0].message.content;
 }
 
 async function queryDeepInfra(model: string, messages: ChatMessage[]): Promise<string> {
     const apiKey = process.env.DEEPINFRA_KEY;
-    if (!apiKey) throw new Error('DEEPINFRA_KEY not set');
-
-    const response = await axios.post(
-        "https://api.deepinfra.com/v1/openai/chat/completions",
-        {
-            model,
-            messages,
-            temperature: 0.85,
-            max_tokens: 150
-        },
-        {
-            headers: { "Authorization": `Bearer ${apiKey} ` },
-            timeout: TIMEOUT_MS
-        }
-    );
+    const response = await axios.post("https://api.deepinfra.com/v1/openai/chat/completions", {
+        model, messages, temperature: 0.85, max_tokens: 150
+    }, { headers: { "Authorization": `Bearer ${apiKey}` }, timeout: TIMEOUT_MS });
     return response.data.choices[0].message.content;
 }
 
-// ==========================================
-// FALLBACKS (Only used when AI completely fails)
-// ==========================================
 function getRandomFallback(): string {
-    // These are questions that work in ANY context
-    const fallbacks = [
-        "wait wait, kaha se h tu?",
-        "btw tu abhi kya kar rha?",
-        "college ya job?",
-        "main bore ho rha... tu bta kuch",
-        "ek baat bta, single h?",
-        "aur sunao, kya plans h weekend ke?",
-        "bored hoon yaar, entertain kar",
-        "hmm interesting, aur?",
-        "sahi sahi, tu bta apne baare mein",
-        "acha chal kuch interesting bta",
-    ];
+    const fallbacks = ["wait wait, kaha se h tu?", "college ya job?", "ek baat bta, single h?", "bored hoon yaar", "acha chal kuch interesting bta"];
     return fallbacks[Math.floor(Math.random() * fallbacks.length)];
 }
 
-// ==========================================
-// UTILS
-// ==========================================
-export function calculateTyping(responseText: string): number {
-    const duration = 1500 + (responseText.length * 40);
-    return Math.min(duration, 6000);
+export function getTypingDelay(responseText: string): number {
+    const isGhosting = Math.random() < 0.1; // 10% chance to be slow (Ghosting)
+    const extraDelay = isGhosting ? 10000 : 0; // Add 10 seconds
+    return Math.min(1500 + (responseText.length * 40) + extraDelay, 15000);
 }
-
-export const getTypingDelay = calculateTyping;
