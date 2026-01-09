@@ -192,7 +192,7 @@ function startGhostMatchTimeout(
                     if (ghostSession) {
                         ghostSession.chatHistory.push({ role: 'assistant', content: greeting });
                     }
-                }, getTypingDelay(greeting.length));
+                }, getTypingDelay(greeting));
             }, 2000 + Math.random() * 2000); // 2-4 seconds delay before first message
 
             pendingMatchTimeouts.delete(user.id);
@@ -625,7 +625,7 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
                                         );
 
                                         // Calculate typing delay (for the actual typing)
-                                        const typingDelay = getTypingDelay(aiResponse.length);
+                                        const typingDelay = getTypingDelay(aiResponse);
 
                                         setTimeout(() => {
                                             socket.emit('partner_typing', { isTyping: false });
