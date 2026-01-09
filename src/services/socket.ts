@@ -32,7 +32,7 @@ const ghostSessions: Map<string, {
 
 // Pending match timeouts - will trigger ghost match after 10s
 const pendingMatchTimeouts: Map<string, NodeJS.Timeout> = new Map();
-const AI_MATCH_TIMEOUT_MS = 10000; // 10 seconds
+const AI_MATCH_TIMEOUT_MS = 5000; // 5 seconds - quick match
 
 // Message buffer settings
 const BASE_WAIT_MS = 3000; // Wait 3 seconds after last message
