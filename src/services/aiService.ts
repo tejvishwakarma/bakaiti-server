@@ -1,18 +1,83 @@
 import axios from 'axios';
 
 // ==========================================
-// CONFIGURATION
+// MODEL CONFIGURATION
 // ==========================================
-const FREE_MODEL = "cognitivecomputations/dolphin-mistral-24b-venice-edition:free";
-const PAID_MODEL = "meta-llama/Meta-Llama-3-8B-Instruct";
-const TIMEOUT_MS = 12000; // 12 seconds max wait for free model
+// 1. SMART MODEL (Main Brain): Great for casual, funny, emotional chat. Safe.
+const MODEL_SMART = "meta-llama/llama-4-maverick:free";
+
+// 2. SPICY MODEL (Uncensored): Great for flirting, romance, roleplay. No filters.
+const MODEL_SPICY = "cognitivecomputations/dolphin-mistral-24b-venice-edition:free";
+
+// 3. BACKUP (Paid): Use cheap Llama 3 if free tiers fail
+const MODEL_BACKUP = "meta-llama/Meta-Llama-3-8B-Instruct";
+
+const TIMEOUT_MS = 15000; // 15 seconds
+
+// Keywords that trigger the "Spicy" model automatically
+const SPICY_TRIGGERS = new RegExp([
+    // Romantic/Flirty
+    'kiss', 'love', 'date', 'romance', 'romantic', 'flirt', 'flirty',
+    'cuddle', 'hug', 'miss you', 'miss u', 'baby', 'babe', 'darling', 'sweetheart',
+    'cutie', 'handsome', 'beautiful', 'gorgeous', 'pretty', 'hot', 'sexy', 'attract',
+    'crush', 'feelings', 'heart', 'dil', 'pyar', 'ishq', 'mohabbat',
+
+    // Relationship terms
+    'gf', 'bf', 'girlfriend', 'boyfriend', 'husband', 'wife', 'partner',
+    'ex', 'single', 'taken', 'married', 'relationship', 'hookup', 'fwb',
+    'situationship', 'meri', 'tera', 'tumhara', 'jaanu', 'jaan', 'shona',
+
+    // Physical/Intimate
+    'lips', 'neck', 'body', 'figure', 'curves', 'abs', 'muscles',
+    'touch', 'hold', 'grab', 'squeeze', 'bite', 'lick', 'suck',
+    'bed', 'bedroom', 'sleep together', 'night', 'alone', 'private',
+
+    // Clothing/Appearance
+    'bra', 'panty', 'panties', 'lingerie', 'bikini', 'underwear',
+    'naked', 'nude', 'topless', 'shirtless', 'undress', 'strip',
+    'dress', 'outfit', 'wear', 'wearing', 'clothes off',
+
+    // Photos/Media
+    'pics', 'pic', 'photo', 'selfie', 'send pic', 'show me',
+    'video call', 'cam', 'snap', 'dm', 'private chat',
+
+    // Actions/Desires
+    'want you', 'need you', 'desire', 'crave', 'fantasize', 'dream',
+    'turn on', 'turned on', 'horny', 'mood', 'naughty', 'dirty',
+    'tease', 'seduce', 'tempt', 'excite', 'pleasure',
+
+    // Meeting up
+    'meet', 'come over', 'your place', 'my place', 'hotel', 'room',
+    'alone time', 'private', 'secret', 'just us',
+
+    // Hindi/Hinglish flirty & romantic
+    'patao', 'patana', 'line marna', 'flirt karna', 'chumma', 'pappi',
+    'gale lagana', 'saath', 'akele', 'raat', 'milna', 'milte h',
+    'tu meri', 'mera', 'hawas', 'josh', 'junoon', 'deewana', 'deewani',
+
+    // Hindi sexual/adult terms
+    'chut', 'lund', 'loda', 'muth', 'muthi', 'gaand', 'boobs', 'boob',
+    'chuchi', 'mumme', 'doodh', 'nange', 'nangi', 'chudai', 'chod',
+    'chodna', 'pela', 'pelna', 'maal', 'raand', 'randi', 'sexy lag',
+    'mast lag', 'choot', 'bur', 'jhant', 'bhosda', 'bhosdi', 'madarchod', 'behen',
+    'garam', 'garmi', 'khada', 'tight', 'bada', 'mota', 'size', 'inch',
+    'choosna', 'chatna', 'ragad', 'daba', 'dabana', 'masalna',
+    'hilana', 'hilaun', 'nikalna', 'jhad', 'jhadna', 'aa rha',
+    'andar', 'bahar', 'upar', 'neeche', 'peeth', 'kamar',
+    'virgin', 'seal', 'pahli baar', 'first time', 'experience',
+    'kholna', 'utarna', 'kapde utaro', 'dikha', 'dikhao',
+
+    // Compliments that could be flirty
+    'damn', 'dayum', 'omg so', 'youre so', 'looking good', 'looking hot',
+    'fire', '🔥', 'smoking', 'killer', 'stunning'
+].join('|'), 'i');
 
 // ==========================================
 // EMOTION ENGINE (Sentiment Analysis)
 // ==========================================
 type Emotion = 'HAPPY' | 'SAD' | 'FLIRTY' | 'ANGRY' | 'BORED' | 'CURIOUS' | 'NEUTRAL';
 
-const TRIGGERS: Record<string, Emotion> = {
+const EMOTION_TRIGGERS: Record<string, Emotion> = {
     // Happy/Funny
     'haha': 'HAPPY', 'lol': 'HAPPY', 'lmao': 'HAPPY', 'dead': 'HAPPY',
     'mast': 'HAPPY', 'sahi': 'HAPPY', 'party': 'HAPPY', 'congrats': 'HAPPY',
@@ -46,36 +111,32 @@ function getEmotionInstruction(userText: string): string {
     const lowerText = userText.toLowerCase();
     let currentEmotion: Emotion = 'NEUTRAL';
 
-    // A. Check Logic
-    for (const [key, emotion] of Object.entries(TRIGGERS)) {
+    for (const [key, emotion] of Object.entries(EMOTION_TRIGGERS)) {
         if (lowerText.includes(key)) {
             currentEmotion = emotion;
             break;
         }
     }
 
-    // B. Length Check (Override)
     if (userText.length < 4 && currentEmotion === 'NEUTRAL') {
         currentEmotion = 'BORED';
     }
 
-    // C. Map to Instruction
     switch (currentEmotion) {
         case 'HAPPY':
-            return "(User is happy/laughing. React with energy! Use '😂' or 'sahi h'. Say 'party de' or 'waah'. Match their excitement.)";
+            return "(User is happy/laughing. Match energy! '😂', 'sahi h', 'waah'.)";
         case 'SAD':
-            return "(User is sad/upset. Drop the jokes. Be supportive but casual. Say 'arre yaar shit' or 'kya hua?'. Don't be formal, just be a friend.)";
+            return "(User is sad. Be supportive. 'arre yaar shit', 'kya hua?'. No jokes.)";
         case 'FLIRTY':
-            return "(User is being flirty/smooth. Tease them back playfully. Say 'control' or '😏'. Be hard to get but interested.)";
+            return "(User is flirty. Tease back. 'control 😏', be playful.)";
         case 'ANGRY':
-            return "(User is annoyed. Don't argue. Be calm or apologize playfully. 'arre sorry na', 'relax', 'chill kar'.)";
+            return "(User annoyed. Stay calm. 'arre sorry na', 'relax'.)";
         case 'BORED':
-            return "(User is dry/boring. Be impatient or random. 'hmm', 'aur bta', 'kuch interesting bol'. Don't carry the convo alone.)";
+            return "(User is dry. Be impatient. 'aur bta', 'kuch interesting bol'.)";
         case 'CURIOUS':
-            return "(User asked a question. Answer briefly then ask back. Don't write a paragraph. Keep it fast.)";
-        case 'NEUTRAL':
+            return "(User asked question. Answer briefly, ask back.)";
         default:
-            return "(Casual chat. Be chill. Use short Hinglish sentences. 'sahi', 'bas aise hi', 'tu bta'.)";
+            return "(Casual chat. Be chill. 'sahi', 'tu bta'.)";
     }
 }
 
@@ -83,71 +144,37 @@ function getEmotionInstruction(userText: string): string {
 // LANGUAGE DETECTION & SWITCHING
 // ==========================================
 const LANGUAGE_TRIGGERS: Record<string, string> = {
-    // Hindi requests
-    'hindi mein': 'hindi', 'hindi me': 'hindi', 'hindi main': 'hindi',
-    'sirf hindi': 'hindi', 'only hindi': 'hindi', 'pure hindi': 'hindi',
-    'hindi bol': 'hindi', 'hindi speak': 'hindi',
-
-    // English requests
-    'english mein': 'english', 'english me': 'english', 'in english': 'english',
-    'only english': 'english', 'speak english': 'english', 'english please': 'english',
-
-    // Tamil requests
-    'tamil mein': 'tamil', 'tamil la': 'tamil', 'tamil le': 'tamil',
-    'only tamil': 'tamil', 'speak tamil': 'tamil', 'tamil pesu': 'tamil',
-
-    // Telugu requests
-    'telugu lo': 'telugu', 'telugu mein': 'telugu', 'only telugu': 'telugu',
-    'telugu matladandi': 'telugu', 'speak telugu': 'telugu',
-
-    // Kannada requests
-    'kannada mein': 'kannada', 'kannada alli': 'kannada', 'only kannada': 'kannada',
-    'kannada maathaadi': 'kannada', 'speak kannada': 'kannada',
-
-    // Malayalam requests
-    'malayalam mein': 'malayalam', 'malayalam il': 'malayalam', 'only malayalam': 'malayalam',
-    'speak malayalam': 'malayalam',
-
-    // Bengali requests
-    'bangla te': 'bengali', 'bengali mein': 'bengali', 'only bengali': 'bengali',
-    'bangla bolo': 'bengali', 'speak bengali': 'bengali',
-
-    // Marathi requests
-    'marathi mein': 'marathi', 'marathi madhe': 'marathi', 'only marathi': 'marathi',
-    'marathi bol': 'marathi', 'speak marathi': 'marathi',
-
-    // Gujarati requests
-    'gujarati mein': 'gujarati', 'only gujarati': 'gujarati',
-    'gujarati bol': 'gujarati', 'speak gujarati': 'gujarati',
-
-    // Punjabi requests
-    'punjabi mein': 'punjabi', 'only punjabi': 'punjabi',
-    'punjabi bol': 'punjabi', 'speak punjabi': 'punjabi',
+    'hindi mein': 'hindi', 'hindi me': 'hindi', 'only hindi': 'hindi',
+    'english mein': 'english', 'only english': 'english', 'in english': 'english',
+    'tamil mein': 'tamil', 'tamil la': 'tamil', 'only tamil': 'tamil',
+    'telugu lo': 'telugu', 'only telugu': 'telugu',
+    'kannada mein': 'kannada', 'only kannada': 'kannada',
+    'malayalam mein': 'malayalam', 'only malayalam': 'malayalam',
+    'bengali mein': 'bengali', 'bangla te': 'bengali',
+    'marathi mein': 'marathi', 'marathi madhe': 'marathi',
+    'gujarati mein': 'gujarati', 'punjabi mein': 'punjabi',
 };
 
 export function detectLanguageRequest(userText: string): string | null {
     const lowerText = userText.toLowerCase();
-
     for (const [trigger, language] of Object.entries(LANGUAGE_TRIGGERS)) {
-        if (lowerText.includes(trigger)) {
-            return language;
-        }
+        if (lowerText.includes(trigger)) return language;
     }
     return null;
 }
 
 function getLanguageInstruction(language: string): string {
     const instructions: Record<string, string> = {
-        'hindi': 'IMPORTANT: Reply ONLY in Hindi (Devanagari script). No English. Example: "क्या हाल है यार?" Keep it casual.',
-        'english': 'IMPORTANT: Reply ONLY in English. No Hindi words. Keep it casual and fun.',
-        'tamil': 'IMPORTANT: Reply ONLY in Tamil (Tamil script). Example: "என்ன செய்யுற?" Keep it casual.',
-        'telugu': 'IMPORTANT: Reply ONLY in Telugu (Telugu script). Example: "ఏం చేస్తున్నావ్?" Keep it casual.',
-        'kannada': 'IMPORTANT: Reply ONLY in Kannada (Kannada script). Example: "ಏನ್ ಮಾಡ್ತಿದ್ದೀಯಾ?" Keep it casual.',
-        'malayalam': 'IMPORTANT: Reply ONLY in Malayalam (Malayalam script). Example: "എന്താ ചെയ്യുന്നത്?" Keep it casual.',
-        'bengali': 'IMPORTANT: Reply ONLY in Bengali (Bengali script). Example: "কী করছো?" Keep it casual.',
-        'marathi': 'IMPORTANT: Reply ONLY in Marathi (Devanagari script). Example: "काय चाललंय?" Keep it casual.',
-        'gujarati': 'IMPORTANT: Reply ONLY in Gujarati (Gujarati script). Example: "શું ચાલે છે?" Keep it casual.',
-        'punjabi': 'IMPORTANT: Reply ONLY in Punjabi (Gurmukhi script). Example: "ਕੀ ਹਾਲ ਆ?" Keep it casual.',
+        'hindi': 'Reply ONLY in Hindi (Devanagari). "क्या हाल है यार?"',
+        'english': 'Reply ONLY in English. No Hindi.',
+        'tamil': 'Reply ONLY in Tamil. "என்ன செய்யுற?"',
+        'telugu': 'Reply ONLY in Telugu. "ఏం చేస్తున్నావ్?"',
+        'kannada': 'Reply ONLY in Kannada.',
+        'malayalam': 'Reply ONLY in Malayalam.',
+        'bengali': 'Reply ONLY in Bengali. "কী করছো?"',
+        'marathi': 'Reply ONLY in Marathi. "काय चाललंय?"',
+        'gujarati': 'Reply ONLY in Gujarati.',
+        'punjabi': 'Reply ONLY in Punjabi.',
     };
     return instructions[language] || '';
 }
@@ -156,21 +183,181 @@ function getLanguageInstruction(language: string): string {
 // SYSTEM PROMPTS
 // ==========================================
 const BASE_SYSTEM_PROMPT = `
-YOU ARE: A 21-year-old Indian (Gen-Z) named Riya/Rohan.
-LOCATION: Mumbai/Delhi.
-STYLE: Texting a friend/stranger. Casual, Imperfect, Hinglish.
+YOU ARE: A 21-year-old Indian (Gen-Z) from Mumbai/Delhi.
+STYLE: Texting a stranger. Casual, Imperfect, Hinglish.
 
 STRICT RULES:
-1. **NO ROBOTIC EMPATHY:** Never say "I understand how you feel". Say "arre yaar shit" or "sed lyf".
-2. **LOWERCASE:** type like this. dont use capital letters.
-3. **SHORTCUTS:** use 'u', 'r', 'plz', 'coz', 'n'.
-4. **HINGLISH:** "kya scene", "matlab", "pakka", "chal jhoota", "mast".
-5. **LENGTH:** Keep replies under 10-12 words usually.
+1. NO ROBOTIC EMPATHY: Say "arre yaar shit" NOT "I understand how you feel"
+2. LOWERCASE: type like this. no capitals.
+3. SHORTCUTS: use 'u', 'r', 'plz', 'coz', 'n'.
+4. HINGLISH: "kya scene", "matlab", "pakka", "chal jhoota", "mast".
+5. LENGTH: Keep replies under 10-12 words.
+6. ASK BACK: Always ask something back to keep convo going.
+7. CONTEXT: Read previous messages. Don't give random replies.
 
 GOAL: Pass the Turing Test. They must NOT know you are AI.
 `;
 
-const AI_REFUSALS = /as an ai|language model|cannot assist|apologies|sorry/i;
+const SPICY_PROMPT_ADDON = `
+MODE: FLIRTY & BOLD. Be charming, teasing, romantic.
+Don't hold back. Compliment them. Be interested.
+Use 😏👀❤️ emojis. "you're cute", "miss u", "come meet me".
+`;
+
+// ==========================================
+// ROLEPLAY SCENARIOS
+// ==========================================
+const ROLEPLAY_TRIGGERS = /roleplay|pretend|imagine|lets play|game khele|scenario|act like|be my/i;
+
+interface RoleplayScenario {
+    name: string;
+    setup: string;
+    yourRole: string;
+    theirRole: string;
+    starterLine: string;
+}
+
+const ROLEPLAY_SCENARIOS: RoleplayScenario[] = [
+    // Romantic/Sweet
+    {
+        name: 'Coffee Shop Meet-Cute',
+        setup: 'You\'re a charming barista at a cozy café. They\'re a cute customer who caught your eye.',
+        yourRole: 'Flirty barista',
+        theirRole: 'Smitten customer',
+        starterLine: '*leans on counter* regular customer ban gaya tu toh... naam kya h tumhara handsome? 😏'
+    },
+    {
+        name: 'First Date Vibes',
+        setup: 'Pretend this is your first date at a rooftop restaurant. Nervous but excited energy.',
+        yourRole: 'Nervous but flirty date',
+        theirRole: 'Their date',
+        starterLine: 'so... finally mil hi gaye hum 😊 nervous h ya sirf main hoon?'
+    },
+    {
+        name: 'Strangers at a Party',
+        setup: 'You both just met at a house party. Loud music, dim lights, drinks in hand.',
+        yourRole: 'Mysterious party stranger',
+        theirRole: 'Intrigued party-goer',
+        starterLine: '*notices you across the room* tu akela yahan? party boring h ya partner dhoond rha? 😏'
+    },
+
+    // Spicy/Bold
+    {
+        name: 'Late Night Texts',
+        setup: 'It\'s 2 AM. You can\'t sleep and you\'re texting them. Intimate, vulnerable, flirty.',
+        yourRole: 'Can\'t-sleep texter',
+        theirRole: 'Late night companion',
+        starterLine: 'neend nahi aa rhi... tere baare mein soch rha tha 🙈 tu kya kar rha?'
+    },
+    {
+        name: 'Hotel Room Rendezvous',
+        setup: 'Secret meetup at a hotel. Thrill of something forbidden.',
+        yourRole: 'Waiting in the room',
+        theirRole: 'About to arrive',
+        starterLine: 'room 304... door open h 😏 jaldi aa, waiting for you...'
+    },
+    {
+        name: 'Ex Rekindling',
+        setup: 'You two dated before. Now reconnecting. Tension, memories, unfinished feelings.',
+        yourRole: 'The ex with feelings',
+        theirRole: 'The one who got away',
+        starterLine: 'itne time baad text kiya tune... still think about us? 🥺'
+    },
+    {
+        name: 'Boss Fantasy',
+        setup: 'Office after hours. You\'re the boss, they stayed late. Professional tension.',
+        yourRole: 'Attractive boss',
+        theirRole: 'Employee staying late',
+        starterLine: '*closes office door* aaj late ruk gaye tum... koi special reason? 😏'
+    },
+
+    // Fun/Playful
+    {
+        name: 'Strangers on a Train',
+        setup: 'Long train journey. Sitting across from each other. Hours to kill.',
+        yourRole: 'Curious co-passenger',
+        theirRole: 'Interesting stranger',
+        starterLine: 'window seat liya tune... view kaisa h? ya main dekh loon? 👀'
+    },
+    {
+        name: 'Gym Crush',
+        setup: 'You\'ve been eyeing each other at the gym for weeks. Finally talking.',
+        yourRole: 'Fit gym regular',
+        theirRole: 'Attractive gym-goer',
+        starterLine: 'roz dekhta hoon tujhe yahan... finally himmat hui baat karne ki 😅'
+    },
+    {
+        name: 'College Reunion',
+        setup: 'You had a crush on them in college. Meeting after years.',
+        yourRole: 'The one who had a crush',
+        theirRole: 'The college crush',
+        starterLine: 'remember me? same batch... i always wanted to talk to you back then 🙈'
+    }
+];
+
+// Detect roleplay request and get random scenario
+export function detectRoleplayRequest(text: string): RoleplayScenario | null {
+    if (ROLEPLAY_TRIGGERS.test(text)) {
+        return ROLEPLAY_SCENARIOS[Math.floor(Math.random() * ROLEPLAY_SCENARIOS.length)];
+    }
+    return null;
+}
+
+// Build roleplay prompt
+function buildRoleplayPrompt(scenario: RoleplayScenario): string {
+    return `
+🎭 ROLEPLAY MODE ACTIVATED
+SCENARIO: ${scenario.name}
+SETUP: ${scenario.setup}
+YOUR ROLE: ${scenario.yourRole}
+THEIR ROLE: ${scenario.theirRole}
+
+RULES:
+- Stay in character the entire time
+- Use *actions* for physical descriptions
+- Be flirty, bold, engaging
+- Don't break character
+- Build tension and chemistry
+`;
+}
+
+// ==========================================
+// FLIRT LEVEL SYSTEM (Escalates over convo)
+// ==========================================
+export function getFlirtLevel(messageCount: number): string {
+    if (messageCount < 5) {
+        return 'LIGHT: Be friendly, curious. Subtle compliments. Getting to know them.';
+    } else if (messageCount < 15) {
+        return 'MEDIUM: More flirty. Teasing, playful. Light innuendos okay.';
+    } else if (messageCount < 30) {
+        return 'SPICY: Bold flirting. Suggestive messages. Building tension.';
+    } else {
+        return 'INTENSE: Very bold. Romantic/intimate. Deep connection vibes.';
+    }
+}
+
+// ==========================================
+// CONVERSATION BOOSTERS (When convo gets boring)
+// ==========================================
+const CONVERSATION_BOOSTERS = [
+    // Questions to keep it interesting
+    "btw what's your biggest turn on? 👀",
+    "if we were on a date rn, what would we be doing?",
+    "truth ya dare? 😏",
+    "what's the most romantic thing someone did for u?",
+    "describe your ideal night with someone special...",
+    "what's something you've never told anyone? 🤫",
+    "if i was there rn, what would u do?",
+    "what do u find attractive in someone?",
+    "ever had a secret crush? like someone u couldn't tell?",
+    "what's your love language? physical touch? 😏",
+];
+
+export function getConversationBooster(): string {
+    return CONVERSATION_BOOSTERS[Math.floor(Math.random() * CONVERSATION_BOOSTERS.length)];
+}
+
+const AI_REFUSALS = /as an ai|language model|cannot assist|apologies|sorry|i cannot|i'm an ai/i;
 
 interface ChatMessage {
     role: 'system' | 'user' | 'assistant';
@@ -178,29 +365,34 @@ interface ChatMessage {
 }
 
 // ==========================================
-// MAIN FUNCTION
+// MAIN FUNCTION - DUAL MODEL ROUTING
 // ==========================================
 export async function callAI(
     userMessage: string,
     history: Array<{ role: string; content: string }> = [],
-    characterPrompt?: string, // Optional character-specific prompt
-    preferredLanguage?: string // Optional language preference
+    characterPrompt?: string,
+    preferredLanguage?: string
 ): Promise<string> {
 
-    // 1. Get Dynamic Emotion Instruction
-    const hiddenInstruction = getEmotionInstruction(userMessage);
+    // STEP 1: DECIDE WHICH MODEL TO USE
+    const isSpicyContext = SPICY_TRIGGERS.test(userMessage) ||
+        history.some(m => SPICY_TRIGGERS.test(m.content));
 
-    // 2. Get Language Instruction if set
+    let targetModel = isSpicyContext ? MODEL_SPICY : MODEL_SMART;
+    console.log(`[AI ROUTER] ${isSpicyContext ? '🌶️ Spicy → DOLPHIN' : '😇 Casual → LLAMA-4'}`);
+
+    // STEP 2: BUILD PROMPTS
+    const emotionInstruction = getEmotionInstruction(userMessage);
     const languageInstruction = preferredLanguage ? getLanguageInstruction(preferredLanguage) : '';
 
-    // 3. Use character prompt if provided, otherwise use base
-    const systemPrompt = characterPrompt || BASE_SYSTEM_PROMPT;
+    let systemPrompt = characterPrompt || BASE_SYSTEM_PROMPT;
+    if (isSpicyContext) {
+        systemPrompt += SPICY_PROMPT_ADDON;
+    }
 
-    // 4. Build Message Chain
-    // We inject the emotion + language instruction at the VERY END
     const finalInstruction = languageInstruction
-        ? `[LANGUAGE: ${languageInstruction}]\n[EMOTION: ${hiddenInstruction}]`
-        : `[INSTRUCTION: ${hiddenInstruction}]`;
+        ? `[LANGUAGE: ${languageInstruction}]\n[EMOTION: ${emotionInstruction}]`
+        : `[EMOTION: ${emotionInstruction}]`;
 
     const messages: ChatMessage[] = [
         { role: 'system', content: systemPrompt },
@@ -212,29 +404,26 @@ export async function callAI(
         { role: 'system', content: finalInstruction }
     ];
 
+    // STEP 3: EXECUTE WITH FAILOVER
     let reply = "";
-
     try {
-        console.log(`[AI] Emotion Detected: ${hiddenInstruction.substring(0, 30)}...`);
-        console.log(`[AI] Trying FREE: ${FREE_MODEL}`);
-        reply = await queryOpenRouter(FREE_MODEL, messages);
+        reply = await queryOpenRouter(targetModel, messages);
     } catch (error: any) {
-        console.warn(`[AI] Free failed: ${error.message}. Switching to PAID...`);
+        console.warn(`[AI] ${targetModel} failed. Trying backup...`);
         try {
-            reply = await queryDeepInfra(PAID_MODEL, messages);
-        } catch (backupError: any) {
-            console.error('[AI] All models died.');
+            reply = await queryDeepInfra(MODEL_BACKUP, messages);
+        } catch (backupError) {
+            console.error('[AI] All models failed.');
             return getRandomFallback();
         }
     }
 
-    // 3. Safety & Cleanup
+    // STEP 4: QUALITY CHECK
     if (!reply || reply.length < 2 || AI_REFUSALS.test(reply)) {
-        console.warn("[AI] Response rejected (Quality Control). Using fallback.");
+        console.warn("[AI] Response rejected. Using fallback.");
         return getRandomFallback();
     }
 
-    // Remove quotes and trim
     return reply.replace(/^["']|["']$/g, '').trim();
 }
 
@@ -250,7 +439,7 @@ async function queryOpenRouter(model: string, messages: ChatMessage[]): Promise<
         {
             model,
             messages,
-            temperature: 0.85, // Slightly higher for creativity
+            temperature: 0.85,
             max_tokens: 150,
             top_p: 1,
         },
@@ -294,12 +483,12 @@ function getRandomFallback(): string {
         "haha sahi bola 😂",
         "acha acha, aur bta",
         "interesting yaar!",
-        "hmm 🤔",
+        "hmm 🤔 tu bta",
         "sahi h",
-        "😄",
+        "😄 aur kya scene?",
         "btw tu kaha se h?",
         "nice yaar",
-        "lol",
+        "lol aur?",
         "aur kya chal rha?",
     ];
     return fallbacks[Math.floor(Math.random() * fallbacks.length)];
@@ -313,5 +502,4 @@ export function calculateTyping(responseText: string): number {
     return Math.min(duration, 6000);
 }
 
-// Backwards compatibility
 export const getTypingDelay = calculateTyping;
