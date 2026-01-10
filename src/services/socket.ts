@@ -5,6 +5,8 @@ import { verifyFirebaseToken } from '../config/firebase';
 import prisma from '../config/database';
 import getRedis, { redisKeys } from '../config/redis';
 import { User } from '@prisma/client';
+import { AIService } from './aiService';
+import { generateGhostProfile } from '../utils/ghostProfiles';
 
 interface AuthenticatedSocket extends Socket {
     user?: User;
@@ -15,6 +17,8 @@ interface SessionData {
     user2Id: string;
     startedAt: number;
     moodTheme: string;
+    isGhost?: boolean;
+    ghostProfile?: any;
 }
 
 // Available mood themes
@@ -273,8 +277,75 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
                     }
                 } else {
                     // No valid match found, add self to queue
-                    await redis.rpush(queueKey, user.id);
                     socket.emit('matching_status', { status: 'searching' });
+
+                    // AI Ghost Fallback Timeout
+                    // If user is still in queue after 10 seconds, match with Ghost
+                    setTimeout(async () => {
+                        try {
+                            // Check if user is still in the queue
+                            const currentPos = await redis.lpos(queueKey, user.id);
+                            if (currentPos !== null) {
+                                console.log(`👻 Triggering Ghost Match for ${user.email}...`);
+
+                                // Remove user from queue
+                                await redis.lrem(queueKey, 0, user.id);
+
+                                // Generate Ghost Profile
+                                const ghost = generateGhostProfile();
+                                const sessionId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+                                const moodTheme = MOOD_THEMES[Math.floor(Math.random() * MOOD_THEMES.length)];
+
+                                const sessionData: SessionData = {
+                                    user1Id: user.id,
+                                    user2Id: ghost.id,
+                                    startedAt: Date.now(),
+                                    moodTheme,
+                                    isGhost: true,
+                                    ghostProfile: ghost
+                                };
+
+                                await redis.set(
+                                    redisKeys.session(sessionId),
+                                    JSON.stringify(sessionData),
+                                    'EX',
+                                    1800
+                                );
+
+                                // Join user to session
+                                socket.join(sessionId);
+
+                                // Set user session
+                                await redis.set(redisKeys.userSession(user.id), sessionId, 'EX', 1800);
+
+                                // Notify user (formatted as if a real match found)
+                                socket.emit('match_found', {
+                                    sessionId,
+                                    moodTheme,
+                                    partner: {
+                                        displayName: ghost.displayName,
+                                        photoUrl: ghost.photoUrl,
+                                        isGhost: true // Frontend can choose to hide this
+                                    }
+                                });
+
+                                console.log(`👻 Ghost Match Created: ${sessionId}`);
+
+                                // Send initial greeting from Ghost after short delay
+                                setTimeout(async () => {
+                                    const greeting = await AIService.generateTextResponse('hello', ghost, []);
+                                    socket.emit('new_message', {
+                                        sessionId,
+                                        senderId: ghost.id,
+                                        message: greeting,
+                                        timestamp: Date.now(),
+                                    });
+                                }, 2500);
+                            }
+                        } catch (err) {
+                            console.error('Ghost fallback error:', err);
+                        }
+                    }, 5000); // 10s wait time -> reduced to 5s for testing
                 }
             } catch (error) {
                 console.error('Start matching error:', error);
@@ -361,6 +432,50 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
 
                 // Refresh session TTL
                 await redis.expire(redisKeys.session(sessionId), 1800);
+
+                // AI GHOST RESPONSE LOGIC
+                if (session.isGhost && session.ghostProfile) {
+                    const partnerId = session.user2Id; // Helper, though we know it's the ghost
+
+                    // Simulate "typing"
+                    setTimeout(() => {
+                        socket.emit('partner_typing', { isTyping: true });
+                    }, 1000);
+
+                    // Stop typing and send response
+                    setTimeout(async () => {
+                        socket.emit('partner_typing', { isTyping: false });
+
+                        try {
+                            // 1. Check for Image Intent
+                            if (AIService.isImageRequest(message)) {
+                                console.log('📸 User requested image from Ghost...');
+                                const imageUrl = await AIService.generateImage(message);
+
+                                socket.emit('new_message', {
+                                    sessionId,
+                                    senderId: session.ghostProfile.id,
+                                    message: '[Image]',
+                                    type: 'image',
+                                    imageUrl: imageUrl, // Data URI
+                                    timestamp: Date.now(),
+                                });
+                            } else {
+                                // 2. Generate Text Response
+                                const responseText = await AIService.generateTextResponse(message, session.ghostProfile, []);
+
+                                socket.emit('new_message', {
+                                    sessionId,
+                                    senderId: session.ghostProfile.id,
+                                    message: responseText,
+                                    timestamp: Date.now(),
+                                });
+                            }
+                        } catch (err) {
+                            console.error('AI Response Error:', err);
+                        }
+                    }, 3500); // Delayed response
+                }
             } catch (error) {
                 console.error('Send message error:', error);
                 socket.emit('error', { message: 'Failed to send message' });
