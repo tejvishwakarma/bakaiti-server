@@ -8,12 +8,16 @@ interface ChatMessage {
     content: string;
 }
 
-// Using updated, reliable free models as of Jan 2026
 // Using known working free models (Jan 2026)
-const MODEL_SMART = "google/gemini-2.0-flash-exp:free";
-const MODEL_SPICY = "meta-llama/llama-3.2-3b-instruct:free"; // Reliable, fast, free
-const MODEL_BACKUP = "microsoft/phi-3-medium-128k-instruct:free"; // Good fallback
-const TIMEOUT_MS = 15000;
+const MODEL_SMART = "google/gemini-2.0-flash-thinking-exp:free";
+const MODEL_SPICY = "mistralai/mistral-small-24b-instruct-2501:free"; // Reliable, fast, free
+const MODEL_BACKUP = "microsoft/phi-4:free"; // Good fallback
+const FALLBACK_MODELS = [
+    "google/gemini-2.0-pro-exp-02-05:free",
+    "huggingfaceh4/zephyr-7b-beta:free",
+    "meta-llama/llama-3.2-11b-vision-instruct:free"
+];
+const TIMEOUT_MS = 25000;
 
 // ==========================================
 // CONSTANTS & TRIGGERS
@@ -293,18 +297,25 @@ export async function callAI(
         { role: 'system', content: finalInstruction }
     ];
 
-    // 4. GENERATION
+    // 4. GENERATION (Robust Rotation)
     let reply = "";
-    try {
-        reply = await fetchWithRetry(() => queryOpenRouter(targetModel, messages));
-    } catch (error) {
-        console.warn(`[AI] Primary failed (${targetModel}). Trying Backup...`);
+
+    // Priority List: Target -> Backup -> Fallback List
+    const modelQueue = [targetModel, MODEL_BACKUP, ...FALLBACK_MODELS];
+
+    for (const model of modelQueue) {
         try {
-            reply = await fetchWithRetry(() => queryOpenRouter(MODEL_BACKUP, messages));
+            console.log(`[AI] Trying model: ${model}...`);
+            reply = await fetchWithRetry(() => queryOpenRouter(model, messages));
+            if (reply && reply.length > 2 && !AI_REFUSALS.test(reply)) break; // Success
         } catch (e) {
-            console.error("[AI] All models failed.", e);
-            return [getRandomFallback()];
+            console.warn(`[AI] Failed with ${model}. Trying next...`);
         }
+    }
+
+    if (!reply) {
+        console.error("[AI] ALL MODELS FAILED. Using static fallback.");
+        return [getRandomFallback()];
     }
 
     if (!reply || reply.length < 2 || AI_REFUSALS.test(reply)) return [getRandomFallback()];
