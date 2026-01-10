@@ -391,11 +391,11 @@ async function generateImagePrompt(userText: string, persona: string): Promise<s
         // Fallback: Generate varied prompts if AI fails
         console.log("[AI] Image prompt generation failed, using random fallback prompt");
         const fallbackPrompts = [
-            "raw photo, selfie, indian college girl, 21yo, casual outfit, dimly lit bedroom, realistic, beautiful face",
-            "raw photo, selfie, young indian woman, mirror selfie, cute smile, bedroom lighting, natural beauty",
-            "raw photo, indian girl, 20yo, casual selfie, soft lighting, attractive, candid photo",
-            "raw photo, selfie, desi girl, college student, natural makeup, cozy room, phone selfie",
-            "raw photo, indian beauty, casual wear, bedroom selfie, ambient lighting, pretty face"
+            "closeup portrait, indian college girl, 21yo, beautiful face, soft lighting, bedroom, natural makeup, shoulders up",
+            "face closeup, young indian woman, pretty eyes, cute smile, ambient lighting, intimate setting",
+            "portrait shot, desi girl, 20yo, natural beauty, soft focus, warm lighting, looking at camera",
+            "headshot, indian beauty, long dark hair, expressive eyes, bedroom lighting, sensual gaze",
+            "face portrait, college student, indian girl, subtle smile, cozy room, evening light, attractive"
         ];
         return fallbackPrompts[Math.floor(Math.random() * fallbackPrompts.length)];
     }
@@ -403,14 +403,23 @@ async function generateImagePrompt(userText: string, persona: string): Promise<s
 
 async function generateStableDiffusionImage(prompt: string): Promise<string | null> {
     try {
-        const negative = "deformed hands, extra fingers, cartoon, 3d render, anime, painting, bad anatomy, disfigured, watermark, text";
-        const finalPrompt = encodeURIComponent(`(raw photo, realistic, 8k:1.3), ${prompt}, ${negative}`);
+        // Enhanced negative prompt to fix hand issues
+        const negative = "hands, fingers, arms visible, deformed, mutated, extra limbs, bad anatomy, disfigured, watermark, text, cartoon, 3d, anime, painting";
+
+        // Add pose hints to avoid showing hands
+        const enhancedPrompt = prompt.includes("selfie")
+            ? prompt.replace("selfie", "selfie, face closeup, shoulders up only")
+            : `${prompt}, portrait shot, face focus, no hands visible`;
+
+        const finalPrompt = encodeURIComponent(`(raw photo, realistic, 8k, professional photography:1.3), ${enhancedPrompt}`);
+        const negativeEncoded = encodeURIComponent(negative);
+
         // Add random seed to get unique images every time
         const seed = Math.floor(Math.random() * 999999999);
-        const url = `https://image.pollinations.ai/prompt/${finalPrompt}?width=512&height=512&nologo=true&model=flux&seed=${seed}`;
+        const url = `https://image.pollinations.ai/prompt/${finalPrompt}?width=512&height=768&nologo=true&model=flux&seed=${seed}&negative=${negativeEncoded}`;
 
         console.log(`[AI] Fetching image from Pollinations (seed: ${seed})`);
-        const response = await axios.get(url, { responseType: 'arraybuffer', timeout: 25000 });
+        const response = await axios.get(url, { responseType: 'arraybuffer', timeout: 30000 });
 
         if (response.data) {
             const base64 = Buffer.from(response.data, 'binary').toString('base64');
