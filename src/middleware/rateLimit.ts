@@ -8,13 +8,20 @@ export async function rateLimitMiddleware(
     next: NextFunction
 ): Promise<void> {
     try {
-        if (!req.user) {
-            next();
-            return;
-        }
-
         const redis = getRedis();
-        const key = redisKeys.rateLimit(req.user.id, 'api');
+        let key: string;
+        let limit: number;
+
+        if (req.user) {
+            // Authenticated user limit
+            key = redisKeys.rateLimit(req.user.id, 'api');
+            limit = config.rateLimit.maxMessagesPerMinute;
+        } else {
+            // IP-based limit (fallback)
+            const ip = req.ip || req.socket.remoteAddress || 'unknown';
+            key = `ratelimit:ip:${ip}`;
+            limit = 30; // Stricter limit for unauthenticated requests
+        }
 
         const count = await redis.incr(key);
 
@@ -23,7 +30,7 @@ export async function rateLimitMiddleware(
             await redis.expire(key, 60);
         }
 
-        if (count > config.rateLimit.maxMessagesPerMinute) {
+        if (count > limit) {
             res.status(429).json({ error: 'Rate limit exceeded. Please slow down.' });
             return;
         }

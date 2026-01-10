@@ -2,13 +2,14 @@ import express from 'express';
 import { createServer } from 'http';
 import cors from 'cors';
 import helmet from 'helmet';
+import { rateLimitMiddleware } from './middleware/rateLimit';
 
 import config from './config';
 import { initializeFirebase } from './config/firebase';
 import getRedis from './config/redis';
 import prisma from './config/database';
 import { initializeSocketIO } from './services';
-import { healthRoutes, userRoutes } from './routes';
+import { healthRoutes, userRoutes, confessionRoutes, adminRoutes } from './routes';
 
 async function main() {
     console.log('🚀 Starting Bakaiti Backend...');
@@ -16,8 +17,15 @@ async function main() {
     // Initialize Firebase Admin
     initializeFirebase();
 
-    // Initialize Redis connection (auto-connects with lazyConnect: false)
+    // Initialize Redis connection and verify it's ready
     const redis = getRedis();
+    try {
+        await redis.ping();
+        console.log('✅ Redis connection verified');
+    } catch (err) {
+        console.error('❌ Redis connection failed:', err);
+        process.exit(1);
+    }
 
     // Create Express app
     const app = express();
@@ -35,9 +43,14 @@ async function main() {
     app.use(express.json({ limit: '5mb' })); // For image uploads
     app.use(express.urlencoded({ extended: true }));
 
+    // Global Rate Limiting
+    app.use(rateLimitMiddleware);
+
     // Routes
     app.use('/api', healthRoutes);
     app.use('/api/user', userRoutes);
+    app.use('/api/confessions', confessionRoutes);
+    app.use('/api/admin', adminRoutes);
 
     // 404 handler
     app.use((_req, res) => {

@@ -17,6 +17,7 @@ model User {
   email                String    @unique
   displayName          String?   @map("display_name")
   photoUrl             String?   @map("photo_url")
+  gender               Gender?   // For AI matching
   points               Int       @default(0)
   subscriptionStatus   SubscriptionStatus @default(FREE) @map("subscription_status")
   subscriptionExpiresAt DateTime? @map("subscription_expires_at")
@@ -26,14 +27,30 @@ model User {
   lastLoginAt          DateTime? @map("last_login_at")
   createdAt            DateTime  @default(now()) @map("created_at")
   bannedUntil          DateTime? @map("banned_until")
+  
+  // Admin & moderation fields
+  isAdmin              Boolean   @default(false) @map("is_admin")
+  isBanned             Boolean   @default(false) @map("is_banned")
+  bannedAt             DateTime? @map("banned_at")
+  bannedBy             String?   @map("banned_by")
+  banReason            String?   @map("ban_reason")
 
   // Relations
-  purchases      Purchase[]
-  inventory      Inventory[]
-  skipPenalties  SkipPenalty[]
-  subscriptions  Subscription[]
+  purchases            Purchase[]
+  inventory            Inventory[]
+  skipPenalties        SkipPenalty[]
+  subscriptions        Subscription[]
+  confessions          Confession[]
+  confessionReactions  ConfessionReaction[]
+  confessionComments   ConfessionComment[]
+  reportsMade          Report[]  @relation("ReportsMade")
 
   @@map("users")
+}
+
+enum Gender {
+  MALE
+  FEMALE
 }
 
 enum SubscriptionStatus {
@@ -109,3 +126,97 @@ enum Platform {
   IOS
   ANDROID
 }
+
+// ========================
+// CONFESSION WALL MODELS
+// ========================
+
+enum ConfessionCategory {
+  LOVE
+  SECRET
+  FUNNY
+  RANT
+  REGRET
+  RANDOM
+}
+
+// Confession posts
+model Confession {
+  id          String             @id @default(uuid())
+  content     String             @db.Text
+  category    ConfessionCategory @default(RANDOM)
+  authorId    String             @map("author_id")
+  isAnonymous Boolean            @default(true) @map("is_anonymous")
+  likesCount  Int                @default(0) @map("likes_count")
+  viewsCount  Int                @default(0) @map("views_count")
+  createdAt   DateTime           @default(now()) @map("created_at")
+
+  author    User                 @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  reactions ConfessionReaction[]
+  comments  ConfessionComment[]
+  reports   Report[]
+
+  @@map("confessions")
+}
+
+// Reactions on confessions (fire, cry, laugh, etc.)
+model ConfessionReaction {
+  id           String   @id @default(uuid())
+  confessionId String   @map("confession_id")
+  userId       String   @map("user_id")
+  emoji        String   // 🔥, 😢, 😂, 💔, 🤯
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  confession Confession @relation(fields: [confessionId], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([confessionId, userId])
+  @@map("confession_reactions")
+}
+
+// Comments on confessions
+model ConfessionComment {
+  id           String   @id @default(uuid())
+  confessionId String   @map("confession_id")
+  userId       String   @map("user_id")
+  content      String   @db.Text
+  isAnonymous  Boolean  @default(true) @map("is_anonymous")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  confession Confession @relation(fields: [confessionId], references: [id], onDelete: Cascade)
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reports    Report[]
+
+  @@map("confession_comments")
+}
+
+// ========================
+// MODERATION & REPORTS
+// ========================
+
+enum ReportStatus {
+  PENDING
+  RESOLVED
+  DISMISSED
+}
+
+// Reports for moderation
+model Report {
+  id           String       @id @default(uuid())
+  reporterId   String       @map("reporter_id")
+  confessionId String?      @map("confession_id")
+  commentId    String?      @map("comment_id")
+  reason       String       @db.Text
+  status       ReportStatus @default(PENDING)
+  createdAt    DateTime     @default(now()) @map("created_at")
+  resolvedAt   DateTime?    @map("resolved_at")
+  resolvedBy   String?      @map("resolved_by")
+  resolution   String?      @map("resolution")
+
+  reporter   User               @relation("ReportsMade", fields: [reporterId], references: [id], onDelete: Cascade)
+  confession Confession?        @relation(fields: [confessionId], references: [id], onDelete: Cascade)
+  comment    ConfessionComment? @relation(fields: [commentId], references: [id], onDelete: Cascade)
+
+  @@map("reports")
+}
+

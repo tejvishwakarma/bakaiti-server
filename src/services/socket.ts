@@ -5,8 +5,8 @@ import { verifyFirebaseToken } from '../config/firebase';
 import prisma from '../config/database';
 import getRedis, { redisKeys } from '../config/redis';
 import { User } from '@prisma/client';
-import { AIService } from './aiService';
-import { generateGhostProfile } from '../utils/ghostProfiles';
+import { callAI, getTypingDelay, detectLanguageRequest } from './aiService';
+import { generateGhostProfile, getConversationStarter, buildCharacterPrompt, GhostProfile, GhostCharacter } from '../utils/ghostProfiles';
 
 interface AuthenticatedSocket extends Socket {
     user?: User;
@@ -17,8 +17,57 @@ interface SessionData {
     user2Id: string;
     startedAt: number;
     moodTheme: string;
-    isGhost?: boolean;
-    ghostProfile?: any;
+    isGhostSession?: boolean;
+    ghostProfile?: GhostProfile;
+}
+
+// Ghost session storage (in-memory for now, could be Redis)
+const ghostSessions: Map<string, {
+    ghostProfile: GhostProfile;
+    chatHistory: Array<{ role: string; content: string }>;
+    preferredLanguage?: string; // Store language preference per session
+    pendingMessages: string[]; // Buffer for multiple messages
+    responseTimeout?: NodeJS.Timeout; // Timeout before AI responds
+}> = new Map();
+
+// Pending match timeouts - will trigger ghost match after 10s
+const pendingMatchTimeouts: Map<string, NodeJS.Timeout> = new Map();
+const AI_MATCH_TIMEOUT_MS = 5000; // 5 seconds - quick match
+
+// Message buffer settings
+const BASE_WAIT_MS = 3000; // Wait 3 seconds after last message
+const INCOMPLETE_WAIT_MS = 5000; // Wait 5 seconds if message seems incomplete
+
+// Detect if message is incomplete (user might send more)
+function isIncompleteMessage(text: string): boolean {
+    const lowerText = text.toLowerCase().trim();
+
+    // Very short messages often have follow-ups
+    if (lowerText.length < 5) return true;
+
+    // Common patterns that suggest more coming
+    const incompletePatterns = [
+        /\.{2,}$/, // ends with ..
+        /\?{2,}$/, // ends with ??
+        /btw$/i, // ends with btw
+        /and$/i, // ends with and
+        /but$/i, // ends with but
+        /like$/i, // ends with like
+        /so$/i, // ends with so
+        /wait$/i, // wait
+        /one sec/i, // one sec
+        /hold on/i, // hold on
+        /ruk/i, // ruk (wait in hindi)
+        /sun/i, // sun (listen in hindi)
+        /ek min/i, // one minute
+    ];
+
+    return incompletePatterns.some(pattern => pattern.test(lowerText));
+}
+
+// Random delay for human-like timing (3-8 seconds before typing shows)
+function getRandomThinkingDelay(): number {
+    return 3000 + Math.random() * 5000;
 }
 
 // Available mood themes
@@ -26,6 +75,135 @@ const MOOD_THEMES = [
     'ocean', 'sunset', 'forest', 'night', 'sunrise',
     'lavender', 'coral', 'arctic', 'desert', 'aurora'
 ];
+
+
+/**
+ * Start a timeout for ghost matching - will match user with AI if no real match found
+ */
+function startGhostMatchTimeout(
+    socket: AuthenticatedSocket,
+    user: User,
+    userMood: string,
+    io: SocketIOServer
+) {
+    // Clear any existing timeout for this user
+    const existingTimeout = pendingMatchTimeouts.get(user.id);
+    if (existingTimeout) {
+        clearTimeout(existingTimeout);
+    }
+
+    console.log(`⏱️ Starting ${AI_MATCH_TIMEOUT_MS / 1000}s ghost match timeout for ${user.id}`);
+
+    const timeout = setTimeout(async () => {
+        try {
+            const redis = getRedis();
+
+            // Check if user is still in queue (not matched yet)
+            const queueKey = redisKeys.matchQueue();
+            const position = await redis.lpos(queueKey, user.id);
+
+            if (position === null) {
+                // User already matched, ignore
+                console.log(`👻 Ghost timeout expired but user ${user.id} already matched`);
+                pendingMatchTimeouts.delete(user.id);
+                return;
+            }
+
+            // Remove from queue
+            await redis.lrem(queueKey, 0, user.id);
+            await redis.lrem(`matching_queue:mood:${userMood}`, 0, user.id);
+
+            // Create ghost session
+            console.log(`👻 Creating ghost match for user ${user.id}`);
+
+            // Generate ghost profile with opposite gender
+            const userGender = (user as any).gender as string | undefined;
+            const ghostProfile = generateGhostProfile(userMood, userGender);
+            const sessionId = `ghost_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            const moodTheme = MOOD_THEMES[Math.floor(Math.random() * MOOD_THEMES.length)];
+
+            const sessionData: SessionData = {
+                user1Id: user.id,
+                user2Id: ghostProfile.id,
+                startedAt: Date.now(),
+                moodTheme,
+                isGhostSession: true,
+                ghostProfile
+            };
+
+            // Store session in Redis
+            await redis.set(
+                redisKeys.session(sessionId),
+                JSON.stringify(sessionData),
+                'EX',
+                1800 // 30 min TTL
+            );
+
+            // Store ghost session data for message handling
+            ghostSessions.set(sessionId, {
+                ghostProfile,
+                chatHistory: [],
+                pendingMessages: [] // Initialize message buffer
+            });
+
+            // Join socket to session room
+            socket.join(sessionId);
+
+            // Store active session for user
+            await redis.set(redisKeys.userSession(user.id), sessionId, 'EX', 1800);
+
+            // Notify user of match
+            socket.emit('match_found', {
+                sessionId,
+                moodTheme,
+                yourMood: userMood,
+                partnerMood: ghostProfile.mood,
+                isSameMood: userMood === ghostProfile.mood || userMood === 'random',
+                partner: {
+                    displayName: ghostProfile.displayName,
+                    photoUrl: ghostProfile.photoUrl,
+                }
+            });
+
+            console.log(`👻 Ghost session created: ${sessionId} (${ghostProfile.displayName})`);
+
+            // Send initial greeting after a short delay (like a real person)
+            setTimeout(async () => {
+                // Use character personality for greeting
+                const greeting = ghostProfile.character
+                    ? getConversationStarter(ghostProfile.character)
+                    : `heyyy! kya scene h? 😄`;
+
+                // Emit typing indicator
+                socket.emit('partner_typing', { isTyping: true });
+
+                // Wait for "typing" then send message
+                setTimeout(() => {
+                    socket.emit('partner_typing', { isTyping: false });
+                    socket.emit('new_message', {
+                        sessionId,
+                        senderId: ghostProfile.id,
+                        message: greeting,
+                        timestamp: Date.now(),
+                    });
+
+                    // Add to chat history
+                    const ghostSession = ghostSessions.get(sessionId);
+                    if (ghostSession) {
+                        ghostSession.chatHistory.push({ role: 'assistant', content: greeting });
+                    }
+                }, getTypingDelay(greeting));
+            }, 2000 + Math.random() * 2000); // 2-4 seconds delay before first message
+
+            pendingMatchTimeouts.delete(user.id);
+        } catch (error) {
+            console.error('Ghost match timeout error:', error);
+            pendingMatchTimeouts.delete(user.id);
+        }
+    }, AI_MATCH_TIMEOUT_MS);
+
+    pendingMatchTimeouts.set(user.id, timeout);
+}
 
 export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
     const io = new SocketIOServer(httpServer, {
@@ -129,8 +307,11 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
         // MATCHING EVENTS
         // ==========================
 
-        socket.on('start_matching', async () => {
+        socket.on('start_matching', async (data: { mood?: string } = {}) => {
             try {
+                const userMood = data.mood || 'random';
+                console.log(`🎭 User ${user.id} started matching with mood: ${userMood}`);
+
                 // Check for active penalty
                 const penaltyUntil = await redis.get(redisKeys.penalty(user.id));
                 if (penaltyUntil && parseInt(penaltyUntil) > Date.now()) {
@@ -150,8 +331,12 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
                 // Refresh user's online status (prevents stale key after idle)
                 await redis.set(redisKeys.userOnline(user.id), socket.id, 'EX', 300);
 
+                // Store user's current mood for matching
+                await redis.set(`user:${user.id}:mood`, userMood, 'EX', 300);
+
                 // Add to matching queue
                 const queueKey = redisKeys.matchQueue();
+                const moodQueueKey = `matching_queue:mood:${userMood}`;
 
                 // Check if already in queue
                 const existingPosition = await redis.lpos(queueKey, user.id);
@@ -160,42 +345,67 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
                     return;
                 }
 
-                // Try to find a match from the queue
+                // Try to find a match - first from same mood queue, then general queue
                 let matchedUserId: string | null = null;
                 const skippedUsers: string[] = [];
+                const skippedMoodUsers: string[] = [];
 
-                while (true) {
-                    const candidateId = await redis.lpop(queueKey);
-                    if (!candidateId) break;
+                // Phase 1: Try mood-specific queue (except for 'random' which goes straight to general)
+                if (userMood !== 'random') {
+                    while (true) {
+                        const candidateId = await redis.lpop(moodQueueKey);
+                        if (!candidateId) break;
 
-                    if (candidateId === user.id) {
-                        // Don't match with self
-                        skippedUsers.push(candidateId);
-                        continue;
+                        if (candidateId === user.id) {
+                            skippedMoodUsers.push(candidateId);
+                            continue;
+                        }
+
+                        // Verify candidate is still online
+                        const candidateOnline = await redis.get(redisKeys.userOnline(candidateId));
+                        if (!candidateOnline) {
+                            continue; // Skip offline users
+                        }
+
+                        // Complementary matching: vent -> listeners, etc.
+                        // For now, same mood matches same mood
+                        matchedUserId = candidateId;
+                        console.log(`🎭 Mood match found: ${user.id} <-> ${candidateId} (mood: ${userMood})`);
+                        break;
                     }
 
-                    // TODO: Re-enable for production - 24h match history check
-                    // if (recentlyMatched.includes(candidateId)) {
-                    //     skippedUsers.push(candidateId);
-                    //     continue;
-                    // }
-                    // const candidateHistory = await redis.sismember(
-                    //     redisKeys.matchHistory(candidateId),
-                    //     user.id
-                    // );
-                    // if (candidateHistory) {
-                    //     skippedUsers.push(candidateId);
-                    //     continue;
-                    // }
-
-                    // Found valid match
-                    matchedUserId = candidateId;
-                    break;
+                    // Put back skipped mood users
+                    if (skippedMoodUsers.length > 0) {
+                        await redis.lpush(moodQueueKey, ...skippedMoodUsers.reverse());
+                    }
                 }
 
-                // Put back skipped users to the front of queue
-                if (skippedUsers.length > 0) {
-                    await redis.lpush(queueKey, ...skippedUsers.reverse());
+                // Phase 2: Try general queue if no mood match
+                if (!matchedUserId) {
+                    while (true) {
+                        const candidateId = await redis.lpop(queueKey);
+                        if (!candidateId) break;
+
+                        if (candidateId === user.id) {
+                            skippedUsers.push(candidateId);
+                            continue;
+                        }
+
+                        // Verify candidate is still online
+                        const candidateOnline = await redis.get(redisKeys.userOnline(candidateId));
+                        if (!candidateOnline) {
+                            continue; // Skip offline users
+                        }
+
+                        matchedUserId = candidateId;
+                        console.log(`🎲 Random match found: ${user.id} <-> ${candidateId}`);
+                        break;
+                    }
+
+                    // Put back skipped users to the front of queue
+                    if (skippedUsers.length > 0) {
+                        await redis.lpush(queueKey, ...skippedUsers.reverse());
+                    }
                 }
 
                 if (matchedUserId) {
@@ -249,10 +459,17 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
                             })
                         ]);
 
+                        // Get matched user's mood
+                        const matchedUserMood = await redis.get(`user:${matchedUserId}:mood`) || 'random';
+                        const isSameMood = userMood === matchedUserMood || userMood === 'random' || matchedUserMood === 'random';
+
                         // Notify current user with matched user's info as partner
                         socket.emit('match_found', {
                             sessionId,
                             moodTheme,
+                            yourMood: userMood,
+                            partnerMood: matchedUserMood,
+                            isSameMood,
                             partner: {
                                 displayName: matchedUserProfile?.displayName || 'Partner',
                                 photoUrl: matchedUserProfile?.photoUrl || null,
@@ -263,6 +480,9 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
                         matchedSocket?.emit('match_found', {
                             sessionId,
                             moodTheme,
+                            yourMood: matchedUserMood,
+                            partnerMood: userMood,
+                            isSameMood,
                             partner: {
                                 displayName: currentUserProfile?.displayName || 'Partner',
                                 photoUrl: currentUserProfile?.photoUrl || null,
@@ -270,82 +490,31 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
                         });
 
                         console.log(`✨ Match created: ${sessionId}`);
+                        // Clear any pending ghost match timeout
+                        const pendingTimeout = pendingMatchTimeouts.get(user.id);
+                        if (pendingTimeout) {
+                            clearTimeout(pendingTimeout);
+                            pendingMatchTimeouts.delete(user.id);
+                        }
                     } else {
-                        // Matched user disconnected, add self to queue
+                        // Matched user disconnected, add self to both queues
+                        if (userMood !== 'random') {
+                            await redis.rpush(moodQueueKey, user.id);
+                        }
                         await redis.rpush(queueKey, user.id);
-                        socket.emit('matching_status', { status: 'searching' });
+                        socket.emit('matching_status', { status: 'searching', mood: userMood });
+                        // Start ghost match timeout
+                        startGhostMatchTimeout(socket, user, userMood, io);
                     }
                 } else {
-                    // No valid match found, add self to queue
-                    socket.emit('matching_status', { status: 'searching' });
-
-                    // AI Ghost Fallback Timeout
-                    // If user is still in queue after 10 seconds, match with Ghost
-                    setTimeout(async () => {
-                        try {
-                            // Check if user is still in the queue
-                            const currentPos = await redis.lpos(queueKey, user.id);
-                            if (currentPos !== null) {
-                                console.log(`👻 Triggering Ghost Match for ${user.email}...`);
-
-                                // Remove user from queue
-                                await redis.lrem(queueKey, 0, user.id);
-
-                                // Generate Ghost Profile
-                                const ghost = generateGhostProfile();
-                                const sessionId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-                                const moodTheme = MOOD_THEMES[Math.floor(Math.random() * MOOD_THEMES.length)];
-
-                                const sessionData: SessionData = {
-                                    user1Id: user.id,
-                                    user2Id: ghost.id,
-                                    startedAt: Date.now(),
-                                    moodTheme,
-                                    isGhost: true,
-                                    ghostProfile: ghost
-                                };
-
-                                await redis.set(
-                                    redisKeys.session(sessionId),
-                                    JSON.stringify(sessionData),
-                                    'EX',
-                                    1800
-                                );
-
-                                // Join user to session
-                                socket.join(sessionId);
-
-                                // Set user session
-                                await redis.set(redisKeys.userSession(user.id), sessionId, 'EX', 1800);
-
-                                // Notify user (formatted as if a real match found)
-                                socket.emit('match_found', {
-                                    sessionId,
-                                    moodTheme,
-                                    partner: {
-                                        displayName: ghost.displayName,
-                                        photoUrl: ghost.photoUrl,
-                                        isGhost: true // Frontend can choose to hide this
-                                    }
-                                });
-
-                                console.log(`👻 Ghost Match Created: ${sessionId}`);
-
-                                // Send initial greeting from Ghost after short delay
-                                setTimeout(async () => {
-                                    const greeting = await AIService.generateTextResponse('hello', ghost, []);
-                                    socket.emit('new_message', {
-                                        sessionId,
-                                        senderId: ghost.id,
-                                        message: greeting,
-                                        timestamp: Date.now(),
-                                    });
-                                }, 2500);
-                            }
-                        } catch (err) {
-                            console.error('Ghost fallback error:', err);
-                        }
-                    }, 5000); // 10s wait time -> reduced to 5s for testing
+                    // No valid match found, add self to mood queue and general queue
+                    if (userMood !== 'random') {
+                        await redis.rpush(moodQueueKey, user.id);
+                    }
+                    await redis.rpush(queueKey, user.id);
+                    socket.emit('matching_status', { status: 'searching', mood: userMood });
+                    // Start ghost match timeout
+                    startGhostMatchTimeout(socket, user, userMood, io);
                 }
             } catch (error) {
                 console.error('Start matching error:', error);
@@ -376,6 +545,19 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
                     return;
                 }
 
+                // RATE LIMITING: Check if user is sending too many messages
+                const rateLimitKey = `ratelimit:socket:msg:${user.id}`;
+                const currentCount = await redis.incr(rateLimitKey);
+
+                if (currentCount === 1) {
+                    await redis.expire(rateLimitKey, 60); // 1 minute window
+                }
+
+                if (currentCount > 60) {
+                    socket.emit('error', { message: 'You are sending messages too fast. Please slow down.' });
+                    return;
+                }
+
                 // Verify session exists and user is part of it
                 const sessionData = await redis.get(redisKeys.session(sessionId));
                 if (!sessionData) {
@@ -396,6 +578,138 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
                     message: message.trim(),
                     timestamp: Date.now(),
                 });
+
+                // Handle ghost session - buffer messages and generate AI response
+                if (session.isGhostSession) {
+                    const ghostSession = ghostSessions.get(sessionId);
+                    if (ghostSession) {
+                        const ghostProfile = ghostSession.ghostProfile;
+
+                        // Detect language switch request
+                        const detectedLanguage = detectLanguageRequest(message);
+                        if (detectedLanguage) {
+                            ghostSession.preferredLanguage = detectedLanguage;
+                            console.log(`[AI] Language switched to: ${detectedLanguage}`);
+                        }
+
+                        // Add message to pending buffer
+                        ghostSession.pendingMessages.push(message.trim());
+
+                        // Clear any existing response timeout
+                        if (ghostSession.responseTimeout) {
+                            clearTimeout(ghostSession.responseTimeout);
+                        }
+
+                        // Determine wait time based on message
+                        const waitTime = isIncompleteMessage(message)
+                            ? INCOMPLETE_WAIT_MS
+                            : BASE_WAIT_MS;
+
+                        console.log(`[AI] Buffering message, waiting ${waitTime}ms for more...`);
+
+                        // Set new timeout to process messages
+                        ghostSession.responseTimeout = setTimeout(async () => {
+                            try {
+                                // Combine all pending messages
+                                const combinedMessage = ghostSession.pendingMessages.join('\n');
+                                ghostSession.pendingMessages = []; // Clear buffer
+
+                                // Add combined message to history
+                                ghostSession.chatHistory.push({ role: 'user', content: combinedMessage });
+
+                                // Random "thinking" delay before typing
+                                const thinkingDelay = getRandomThinkingDelay();
+
+                                setTimeout(async () => {
+                                    // Show typing indicator
+                                    socket.emit('partner_typing', { isTyping: true });
+
+                                    try {
+                                        // Build character-specific prompt if character exists
+                                        const characterPrompt = ghostProfile.character
+                                            ? buildCharacterPrompt(ghostProfile.character)
+                                            : undefined;
+
+                                        const aiResponses = await callAI(
+                                            combinedMessage,
+                                            ghostSession.chatHistory,
+                                            characterPrompt,
+                                            ghostSession.preferredLanguage
+                                        );
+
+                                        // FUNCTION TO SEND MESSAGES SEQUENTIALLY
+                                        const sendMessages = async (messages: string[], index = 0) => {
+                                            if (index >= messages.length) {
+                                                socket.emit('partner_typing', { isTyping: false });
+                                                return;
+                                            }
+
+                                            const msg = messages[index];
+                                            const typingDelay = getTypingDelay(msg);
+
+                                            // Show typing again for each message
+                                            if (index > 0) socket.emit('partner_typing', { isTyping: true });
+
+                                            setTimeout(() => {
+                                                // DETECT IMAGE
+                                                if (msg.startsWith('[IMAGE_URL:')) {
+                                                    const imageUrl = msg.replace('[IMAGE_URL:', '').replace(']', '');
+                                                    socket.emit('new_message', {
+                                                        sessionId,
+                                                        senderId: ghostProfile.id,
+                                                        message: "📷 Photo", // Caption
+                                                        imageUrl: imageUrl,
+                                                        type: 'image',
+                                                        timestamp: Date.now(),
+                                                    });
+                                                } else {
+                                                    // Send Text
+                                                    socket.emit('new_message', {
+                                                        sessionId,
+                                                        senderId: ghostProfile.id,
+                                                        message: msg,
+                                                        timestamp: Date.now(),
+                                                    });
+                                                }
+
+                                                // Recurse
+                                                sendMessages(messages, index + 1);
+                                            }, typingDelay);
+
+                                            // Add to history
+                                            ghostSession.chatHistory.push({ role: 'assistant', content: msg });
+
+                                            // If more messages, wait a tiny bit then type next
+                                            if (index < messages.length - 1) {
+                                                setTimeout(() => {
+                                                    sendMessages(messages, index + 1);
+                                                }, 500); // 500ms pause between messages
+                                            } else {
+                                                socket.emit('partner_typing', { isTyping: false });
+                                            }
+
+                                        }; // End sendMessages
+
+                                        // Start sending
+                                        sendMessages(aiResponses);
+
+                                    } catch (aiError) {
+                                        console.error('AI response error:', aiError);
+                                        socket.emit('partner_typing', { isTyping: false });
+                                    }
+                                }, thinkingDelay);
+
+                            } catch (error) {
+                                console.error('Message processing error:', error);
+                            }
+                        }, waitTime);
+                    }
+
+                    // Skip emoji detection for ghost sessions
+                    await redis.expire(redisKeys.session(sessionId), 1800);
+                    return;
+                }
+
 
                 // Same Vibe detection - extract emojis and check for match
                 const emojiRegex = /[\u{1F300}-\u{1F9FF}]|[\u{2600}-\u{26FF}]|[\u{2700}-\u{27BF}]|[\u{1F600}-\u{1F64F}]|[\u{1F680}-\u{1F6FF}]/gu;
@@ -432,50 +746,6 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
 
                 // Refresh session TTL
                 await redis.expire(redisKeys.session(sessionId), 1800);
-
-                // AI GHOST RESPONSE LOGIC
-                if (session.isGhost && session.ghostProfile) {
-                    const partnerId = session.user2Id; // Helper, though we know it's the ghost
-
-                    // Simulate "typing"
-                    setTimeout(() => {
-                        socket.emit('partner_typing', { isTyping: true });
-                    }, 1000);
-
-                    // Stop typing and send response
-                    setTimeout(async () => {
-                        socket.emit('partner_typing', { isTyping: false });
-
-                        try {
-                            // 1. Check for Image Intent
-                            if (AIService.isImageRequest(message)) {
-                                console.log('📸 User requested image from Ghost...');
-                                const imageUrl = await AIService.generateImage(message);
-
-                                socket.emit('new_message', {
-                                    sessionId,
-                                    senderId: session.ghostProfile.id,
-                                    message: '[Image]',
-                                    type: 'image',
-                                    imageUrl: imageUrl, // Data URI
-                                    timestamp: Date.now(),
-                                });
-                            } else {
-                                // 2. Generate Text Response
-                                const responseText = await AIService.generateTextResponse(message, session.ghostProfile, []);
-
-                                socket.emit('new_message', {
-                                    sessionId,
-                                    senderId: session.ghostProfile.id,
-                                    message: responseText,
-                                    timestamp: Date.now(),
-                                });
-                            }
-                        } catch (err) {
-                            console.error('AI Response Error:', err);
-                        }
-                    }, 3500); // Delayed response
-                }
             } catch (error) {
                 console.error('Send message error:', error);
                 socket.emit('error', { message: 'Failed to send message' });
@@ -769,6 +1039,11 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
         socket.on('webrtc_offer', async (data: { sessionId: string; offer: any }) => {
             try {
                 const { sessionId, offer } = data;
+                // Validate offer structure (basic SDP validation)
+                if (!offer || typeof offer !== 'object' || !offer.type || !offer.sdp) {
+                    console.error('❌ Invalid WebRTC offer structure');
+                    return;
+                }
                 socket.to(sessionId).emit('webrtc_offer', { offer });
             } catch (error) {
                 console.error('WebRTC offer error:', error);
@@ -779,6 +1054,11 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
         socket.on('webrtc_answer', async (data: { sessionId: string; answer: any }) => {
             try {
                 const { sessionId, answer } = data;
+                // Validate answer structure (basic SDP validation)
+                if (!answer || typeof answer !== 'object' || !answer.type || !answer.sdp) {
+                    console.error('❌ Invalid WebRTC answer structure');
+                    return;
+                }
                 socket.to(sessionId).emit('webrtc_answer', { answer });
             } catch (error) {
                 console.error('WebRTC answer error:', error);
@@ -789,6 +1069,11 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
         socket.on('webrtc_ice', async (data: { sessionId: string; candidate: any }) => {
             try {
                 const { sessionId, candidate } = data;
+                // Validate ICE candidate structure
+                if (!candidate || typeof candidate !== 'object') {
+                    console.error('❌ Invalid WebRTC ICE candidate structure');
+                    return;
+                }
                 socket.to(sessionId).emit('webrtc_ice', { candidate });
             } catch (error) {
                 console.error('WebRTC ICE error:', error);
