@@ -9,9 +9,10 @@ interface ChatMessage {
 }
 
 // Using updated, reliable free models as of Jan 2026
+// Using known working free models (Jan 2026)
 const MODEL_SMART = "google/gemini-2.0-flash-exp:free";
-const MODEL_SPICY = "mistralai/mistral-7b-instruct:free";
-const MODEL_BACKUP = "meta-llama/llama-3-8b-instruct:free";
+const MODEL_SPICY = "meta-llama/llama-3.2-3b-instruct:free"; // Reliable, fast, free
+const MODEL_BACKUP = "microsoft/phi-3-medium-128k-instruct:free"; // Good fallback
 const TIMEOUT_MS = 15000;
 
 // ==========================================
@@ -414,10 +415,17 @@ function humanizeText(text: string): string {
 async function queryOpenRouter(model: string, messages: ChatMessage[]): Promise<string> {
     const apiKey = process.env.OPENROUTER_KEY;
     if (!apiKey) throw new Error('OPENROUTER_KEY not set');
-    const response = await axios.post("https://openrouter.ai/api/v1/chat/completions", {
-        model, messages, temperature: 0.85, max_tokens: 150
-    }, { headers: { "Authorization": `Bearer ${apiKey}`, "HTTP-Referer": "https://bakaiti.app" }, timeout: TIMEOUT_MS });
-    return response.data.choices[0].message.content;
+    try {
+        const response = await axios.post("https://openrouter.ai/api/v1/chat/completions", {
+            model, messages, temperature: 0.85, max_tokens: 150
+        }, { headers: { "Authorization": `Bearer ${apiKey}`, "HTTP-Referer": "https://bakaiti.app" }, timeout: TIMEOUT_MS });
+        return response.data.choices[0].message.content;
+    } catch (error: any) {
+        if (error.response?.data) {
+            console.error(`[OpenRouter Error] ${model}:`, JSON.stringify(error.response.data, null, 2));
+        }
+        throw error;
+    }
 }
 
 // Backup function if needed later, kept for compatibility
