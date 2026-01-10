@@ -651,15 +651,37 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
                                             if (index > 0) socket.emit('partner_typing', { isTyping: true });
 
                                             setTimeout(() => {
-                                                // DETECT IMAGE
-                                                if (msg.startsWith('[IMAGE_URL:')) {
-                                                    const imageUrl = msg.replace('[IMAGE_URL:', '').replace(']', '');
+                                                // DETECT IMAGE (Robust Regex to find it anywhere)
+                                                // Previous logic was strict startsWith which failed when AI added emotions/text
+                                                const imageMatch = msg.match(/\[IMAGE_URL:(.*?)\]/);
+
+                                                if (imageMatch) {
+                                                    const imageUrl = imageMatch[1];
+                                                    // Remove the tag from the text message if we want to send text too?
+                                                    // Ideally, if it's JUST an image, we send image type.
+                                                    // If it's mixed, we might want to split it.
+                                                    // For now, let's prioritize sending the image if found.
+
+                                                    const cleanMessage = msg.replace(/\[IMAGE_URL:.*?\]/, '').trim();
+
+                                                    if (cleanMessage.length > 0) {
+                                                        // Send the text part first
+                                                        socket.emit('new_message', {
+                                                            sessionId,
+                                                            senderId: ghostProfile.id,
+                                                            message: cleanMessage,
+                                                            timestamp: Date.now(),
+                                                        });
+                                                    }
+
+                                                    // Send the image part
                                                     socket.emit('new_message', {
                                                         sessionId,
                                                         senderId: ghostProfile.id,
                                                         message: "📷 Photo", // Caption
                                                         imageUrl: imageUrl,
                                                         type: 'image',
+                                                        expiresAt: Date.now() + (24 * 60 * 60 * 1000), // 24 Hours Expiry for AI
                                                         timestamp: Date.now(),
                                                     });
                                                 } else {
