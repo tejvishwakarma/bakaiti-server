@@ -9,13 +9,13 @@ interface ChatMessage {
 }
 
 // ACTUALLY VERIFIED FREE MODELS (Jan 2026) - browsed openrouter.ai/models?q=free
-const MODEL_SMART = "google/gemini-2.0-flash-exp:free"; // Google's free experimental model
+const MODEL_SMART = "openai/gpt-oss-120b:free"; // OpenAI's 117B MoE - best reasoning!
 const MODEL_SPICY = "meta-llama/llama-3.3-70b-instruct:free"; // Meta's powerful free model
-const MODEL_BACKUP = "google/gemma-3-27b-it:free"; // Google Gemma 3
+const MODEL_BACKUP = "google/gemini-2.0-flash-exp:free"; // Google's free experimental
 const FALLBACK_MODELS = [
-    "deepseek/deepseek-r1-0528:free", // DeepSeek R1 (correct ID with date)
-    "mistralai/devstral-2512:free", // Mistral's coding model
-    "nvidia/nemotron-3-nano-30b-a3b:free" // NVIDIA's free model
+    "google/gemma-3-27b-it:free", // Google Gemma 3
+    "deepseek/deepseek-r1-0528:free", // DeepSeek R1
+    "mistralai/devstral-2512:free" // Mistral's coding model
 ];
 const TIMEOUT_MS = 30000;
 
