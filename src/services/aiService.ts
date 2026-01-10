@@ -8,14 +8,14 @@ interface ChatMessage {
     content: string;
 }
 
-// VERIFIED WORKING FREE MODELS (Jan 2026) - openrouter.ai/collections/free-models
-const MODEL_SMART = "deepseek/deepseek-v3:free"; // Fast general chat
-const MODEL_SPICY = "deepseek/deepseek-r1:free"; // High reasoning, good for roleplay
-const MODEL_BACKUP = "nvidia/nemotron-3-nano-30b-a3b:free"; // NVIDIA's free model
+// ACTUALLY VERIFIED FREE MODELS (Jan 2026) - browsed openrouter.ai/models?q=free
+const MODEL_SMART = "google/gemini-2.0-flash-exp:free"; // Google's free experimental model
+const MODEL_SPICY = "meta-llama/llama-3.3-70b-instruct:free"; // Meta's powerful free model
+const MODEL_BACKUP = "google/gemma-3-27b-it:free"; // Google Gemma 3
 const FALLBACK_MODELS = [
-    "zhipu-ai/glm-4.5-air:free", // Chinese AI, good multilingual
-    "mistral/devstral-2-2512:free", // Mistral's coding model
-    "cognitivecomputations/venice-uncensored:free" // Uncensored model
+    "deepseek/deepseek-r1-0528:free", // DeepSeek R1 (correct ID with date)
+    "mistralai/devstral-2512:free", // Mistral's coding model
+    "nvidia/nemotron-3-nano-30b-a3b:free" // NVIDIA's free model
 ];
 const TIMEOUT_MS = 30000;
 
