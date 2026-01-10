@@ -652,16 +652,10 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
 
                                             setTimeout(() => {
                                                 // DETECT IMAGE (Robust Regex to find it anywhere)
-                                                // Previous logic was strict startsWith which failed when AI added emotions/text
                                                 const imageMatch = msg.match(/\[IMAGE_URL:(.*?)\]/);
 
                                                 if (imageMatch) {
                                                     const imageUrl = imageMatch[1];
-                                                    // Remove the tag from the text message if we want to send text too?
-                                                    // Ideally, if it's JUST an image, we send image type.
-                                                    // If it's mixed, we might want to split it.
-                                                    // For now, let's prioritize sending the image if found.
-
                                                     const cleanMessage = msg.replace(/\[IMAGE_URL:.*?\]/, '').trim();
 
                                                     if (cleanMessage.length > 0) {
@@ -678,10 +672,10 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
                                                     socket.emit('new_message', {
                                                         sessionId,
                                                         senderId: ghostProfile.id,
-                                                        message: "📷 Photo", // Caption
+                                                        message: "📷 Photo",
                                                         imageUrl: imageUrl,
                                                         type: 'image',
-                                                        expiresAt: Date.now() + (24 * 60 * 60 * 1000), // 24 Hours Expiry for AI
+                                                        expiresAt: Date.now() + (24 * 60 * 60 * 1000),
                                                         timestamp: Date.now(),
                                                     });
                                                 } else {
@@ -694,21 +688,18 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
                                                     });
                                                 }
 
-                                                // Recurse
-                                                sendMessages(messages, index + 1);
+                                                // Add to history
+                                                ghostSession.chatHistory.push({ role: 'assistant', content: msg });
+
+                                                // Send next message after a small pause (NO DUPLICATE CALL!)
+                                                if (index < messages.length - 1) {
+                                                    setTimeout(() => {
+                                                        sendMessages(messages, index + 1);
+                                                    }, 500);
+                                                } else {
+                                                    socket.emit('partner_typing', { isTyping: false });
+                                                }
                                             }, typingDelay);
-
-                                            // Add to history
-                                            ghostSession.chatHistory.push({ role: 'assistant', content: msg });
-
-                                            // If more messages, wait a tiny bit then type next
-                                            if (index < messages.length - 1) {
-                                                setTimeout(() => {
-                                                    sendMessages(messages, index + 1);
-                                                }, 500); // 500ms pause between messages
-                                            } else {
-                                                socket.emit('partner_typing', { isTyping: false });
-                                            }
 
                                         }; // End sendMessages
 

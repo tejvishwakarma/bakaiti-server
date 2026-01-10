@@ -228,7 +228,9 @@ export async function callAI(
             }
         } catch (error) {
             console.error("[AI] Refusal generation failed:", error);
-            return ["nah not now", "mood nhi h abhi", "slow down lol"];
+            // Return SINGLE random fallback, not all 3!
+            const fallbacks = ["nah not now", "mood nhi h abhi", "slow down tiger 😏"];
+            return [fallbacks[Math.floor(Math.random() * fallbacks.length)]];
         }
 
         // B. GRANT REQUEST
@@ -365,8 +367,9 @@ function shouldRefuseImage(history: any[]): boolean {
 
     console.log(`[AI Refusal Logic] Requests: ${userRequests}, Refusals: ${aiRefusals}`);
 
-    if (userRequests <= 1 && Math.random() < 0.8) return true;
-    if (userRequests === 2 && aiRefusals >= 1 && Math.random() < 0.4) return true;
+    // Lower refusal rate - only 40% on first ask, 20% on second
+    if (userRequests <= 1 && Math.random() < 0.4) return true;
+    if (userRequests === 2 && aiRefusals >= 1 && Math.random() < 0.2) return true;
     return false;
 }
 
@@ -388,7 +391,9 @@ async function generateImagePrompt(userText: string, persona: string): Promise<s
         if (response.includes("FALSE")) return null;
         return response.replace(/["']/g, '').trim();
     } catch (e) {
-        return null;
+        // Fallback: Generate a default prompt if AI fails
+        console.log("[AI] Image prompt generation failed, using default prompt");
+        return `raw photo, selfie, indian college girl, 21yo, casual, dimly lit room, realistic, beautiful`;
     }
 }
 
