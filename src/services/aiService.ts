@@ -8,15 +8,12 @@ interface ChatMessage {
     content: string;
 }
 
-// ACTUALLY VERIFIED FREE MODELS (Jan 2026) - browsed openrouter.ai/models?q=free
-const MODEL_SMART = "openai/gpt-oss-120b:free"; // OpenAI's 117B MoE - best reasoning!
-const MODEL_SPICY = "meta-llama/llama-3.3-70b-instruct:free"; // Meta's powerful free model
-const MODEL_BACKUP = "google/gemini-2.0-flash-exp:free"; // Google's free experimental
-const FALLBACK_MODELS = [
-    "google/gemma-3-27b-it:free", // Google Gemma 3
-    "deepseek/deepseek-r1-0528:free", // DeepSeek R1
-    "mistralai/devstral-2512:free" // Mistral's coding model
-];
+// GROQ API - Free tier with generous limits (14,400 req/day)
+// Models: https://console.groq.com/docs/models
+const MODEL_SMART = "llama-3.3-70b-versatile"; // Best for general chat
+const MODEL_SPICY = "llama-3.1-70b-versatile"; // Good for roleplay
+const MODEL_BACKUP = "llama-3.1-8b-instant"; // Fast fallback
+const MODEL_FAST = "llama-3.2-3b-preview"; // Ultra-fast for simple tasks
 const TIMEOUT_MS = 30000;
 
 // ==========================================
@@ -223,7 +220,7 @@ export async function callAI(
                 - Be sassy: "slow down tiger", "buy me dinner first".
                 - Do NOT say "I cannot" (robot). Say "nah", "mood nhi h".
                 `;
-                const refusal = await fetchWithRetry(() => queryOpenRouter(MODEL_SPICY, [{ role: 'system', content: refusalPrompt }]));
+                const refusal = await fetchWithRetry(() => queryGroq(MODEL_SPICY, [{ role: 'system', content: refusalPrompt }]));
                 return [limitEmojis(humanizeText(refusal))];
             }
         } catch (error) {
@@ -241,7 +238,7 @@ export async function callAI(
 
                 const [imageUrl, caption] = await Promise.all([
                     generateStableDiffusionImage(imagePrompt),
-                    fetchWithRetry(() => queryOpenRouter(MODEL_SPICY, [{
+                    fetchWithRetry(() => queryGroq(MODEL_SPICY, [{
                         role: 'system',
                         content: `
                         SYSTEM: ${characterPrompt || BASE_SYSTEM_PROMPT}
@@ -299,24 +296,24 @@ export async function callAI(
         { role: 'system', content: finalInstruction }
     ];
 
-    // 4. GENERATION (Robust Rotation)
+    // 4. GENERATION (Simple Groq call with fallback)
     let reply = "";
 
-    // Priority List: Target -> Backup -> Fallback List
-    const modelQueue = [targetModel, MODEL_BACKUP, ...FALLBACK_MODELS];
+    // Try primary model first, then backup
+    const modelQueue = [targetModel, MODEL_BACKUP, MODEL_FAST];
 
     for (const model of modelQueue) {
         try {
-            console.log(`[AI] Trying model: ${model}...`);
-            reply = await fetchWithRetry(() => queryOpenRouter(model, messages));
+            console.log(`[Groq] Trying model: ${model}...`);
+            reply = await fetchWithRetry(() => queryGroq(model, messages));
             if (reply && reply.length > 2 && !AI_REFUSALS.test(reply)) break; // Success
         } catch (e) {
-            console.warn(`[AI] Failed with ${model}. Trying next...`);
+            console.warn(`[Groq] Failed with ${model}. Trying next...`);
         }
     }
 
     if (!reply) {
-        console.error("[AI] ALL MODELS FAILED. Using static fallback.");
+        console.error("[Groq] ALL MODELS FAILED. Using static fallback.");
         return [getRandomFallback()];
     }
 
@@ -387,7 +384,7 @@ async function generateImagePrompt(userText: string, persona: string): Promise<s
     `;
 
     try {
-        const response = await queryOpenRouter(MODEL_SMART, [{ role: 'system', content: prompt }]);
+        const response = await queryGroq(MODEL_SMART, [{ role: 'system', content: prompt }]);
         if (response.includes("FALSE")) return null;
         return response.replace(/["']/g, '').trim();
     } catch (e) {
@@ -428,25 +425,31 @@ function humanizeText(text: string): string {
     return human;
 }
 
-async function queryOpenRouter(model: string, messages: ChatMessage[]): Promise<string> {
-    const apiKey = process.env.OPENROUTER_KEY;
-    if (!apiKey) throw new Error('OPENROUTER_KEY not set');
+async function queryGroq(model: string, messages: ChatMessage[]): Promise<string> {
+    const apiKey = process.env.GROQ_API_KEY;
+    if (!apiKey) throw new Error('GROQ_API_KEY not set');
     try {
-        const response = await axios.post("https://openrouter.ai/api/v1/chat/completions", {
+        const response = await axios.post("https://api.groq.com/openai/v1/chat/completions", {
             model, messages, temperature: 0.85, max_tokens: 150
-        }, { headers: { "Authorization": `Bearer ${apiKey}`, "HTTP-Referer": "https://bakaiti.app" }, timeout: TIMEOUT_MS });
+        }, {
+            headers: {
+                "Authorization": `Bearer ${apiKey}`,
+                "Content-Type": "application/json"
+            },
+            timeout: TIMEOUT_MS
+        });
         return response.data.choices[0].message.content;
     } catch (error: any) {
         if (error.response?.data) {
-            console.error(`[OpenRouter Error] ${model}:`, JSON.stringify(error.response.data, null, 2));
+            console.error(`[Groq Error] ${model}:`, JSON.stringify(error.response.data, null, 2));
         }
         throw error;
     }
 }
 
-// Backup function if needed later, kept for compatibility
-async function queryDeepInfra(model: string, messages: ChatMessage[]): Promise<string> {
-    return queryOpenRouter(model, messages);
+// Alias for compatibility
+async function queryAI(model: string, messages: ChatMessage[]): Promise<string> {
+    return queryGroq(model, messages);
 }
 
 function getRandomFallback(): string {
