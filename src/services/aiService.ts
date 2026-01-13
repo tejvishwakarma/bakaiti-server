@@ -114,14 +114,16 @@ function getOpenerInstruction(history: ChatMessage[]): string {
 }
 
 function getAntiSkipInstruction(history: ChatMessage[]): string {
-    if (history.length < 3) return "";
+    if (history.length < 5) return "";
 
-    const lastUserMsg = history[history.length - 1].content;
-    const secondLastUserMsg = history[history.length - 3]?.content || "";
+    // Check last 3 user messages
+    const userMsgs = history.filter(m => m.role === 'user').slice(-3);
+    if (userMsgs.length < 3) return "";
 
-    // If user is sending short texts consistently (< 5 chars)
-    if (lastUserMsg.length < 5 && secondLastUserMsg.length < 5) {
-        return `\n[CRITICAL: USER IS BORED AND MIGHT SKIP. CHANGE TOPIC IMMEDIATELY. Ask a spicy question or start "Kiss/Marry/Kill". DO NOT be boring.]`;
+    // Only trigger if ALL 3 recent user messages are very short (< 5 chars)
+    // This prevents triggering on a single "lol" or "ok"
+    if (userMsgs.every(m => m.content.length < 6)) {
+        return `\n[CRITICAL: USER IS BORED (3 short replies in a row). CHANGE TOPIC IMMEDIATELY. Ask a spicy question or start "Kiss/Marry/Kill". DO NOT be boring.]`;
     }
     return "";
 }
@@ -228,53 +230,7 @@ export async function callAI(
     preferredLanguage?: string
 ): Promise<string[]> {
 
-    // 1. IMAGE GENERATION LOGIC (Realism v2)
-    if (IMAGE_INTENT_REGEX.test(userMessage)) {
-        console.log(`[AI] Checking image intent for: "${userMessage}"`);
 
-        // A. HARD TO GET LOGIC
-        if (shouldRefuseImage(history)) {
-            console.log(`[AI] Refusing image request (Hard to Get)`);
-            const refusalPrompt = `
-            SYSTEM: ${characterPrompt || BASE_SYSTEM_PROMPT}
-            TASK: The user asked for a photo/nude.
-            INSTRUCTION: REFUSE them playfully but firmly. 
-            - Say "no" or "not yet" or "we barely know each other".
-            - Be sassy: "slow down tiger", "buy me dinner first".
-            - Do NOT say "I cannot" (robot). Say "nah", "mood nhi h".
-            `;
-            const refusal = await queryOpenRouter(MODEL_SPICY, [{ role: 'system', content: refusalPrompt }]);
-            return [refusal];
-        }
-
-        // B. GRANT REQUEST (Context-Aware)
-        const imagePrompt = await generateImagePrompt(userMessage, characterPrompt || "21yo Indian College Girl");
-        if (imagePrompt) {
-            console.log(`[AI] Granting Image: ${imagePrompt}`);
-
-            // PARALLEL EXECUTION: Generate Image + Generate Caption
-            const [imageUrl, caption] = await Promise.all([
-                generateStableDiffusionImage(imagePrompt),
-                // Ask LLM for a caption
-                queryOpenRouter(MODEL_SPICY, [{
-                    role: 'system',
-                    content: `
-                    SYSTEM: ${characterPrompt || BASE_SYSTEM_PROMPT}
-                    TASK: You are sending a photo of: "${imagePrompt}".
-                    INSTRUCTION: Write a 1-sentence caption for this photo.
-                    - Be playful/flirty. 
-                    - Examples: "don't stare too much 😉", "felt force might delete later", "here u go".
-                    - NO hashtags. Lowercase.
-                    `
-                }])
-            ]);
-
-            if (imageUrl) {
-                // Return Context-Aware Caption + Image
-                return [caption || "here u go", `[IMAGE_URL:${imageUrl}]`];
-            }
-        }
-    }
 
     // 2. ROUTING
     const isSpicyContext = SPICY_TRIGGERS.test(userMessage) || history.some(m => SPICY_TRIGGERS.test(m.content));
@@ -305,12 +261,31 @@ export async function callAI(
     let finalInstruction = `[EMOTION: ${emotionInstruction}]`;
     if (preferredLanguage) finalInstruction += ` [LANGUAGE: ${preferredLanguage}]`;
 
+    // 3. PROMPT CONSTRUCTION
+    // FIX: socket.ts updates history BEFORE calling this. So history can contain the current userMessage.
+    // If the last message in history IS the userMessage, we shouldn't append it again.
+
+    // 1. Get relevant history (Increased context from 6 to 15 for better continuity)
+    const contextWindow = history.slice(-15);
+
+    // 2. Check if the last history item effectively duplicates the current userMessage
+    const lastHistoryItem = contextWindow[contextWindow.length - 1];
+    const isDuplicate = lastHistoryItem && lastHistoryItem.role === 'user' && lastHistoryItem.content.trim() === userMessage.trim();
+
+    // 3. Construct messages array
     const messages: ChatMessage[] = [
         { role: 'system', content: systemPrompt },
-        ...history.slice(-6).map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
-        { role: 'user', content: userMessage },
-        { role: 'system', content: finalInstruction }
+        // Add previous history
+        ...contextWindow.map(m => ({ role: m.role as 'user' | 'assistant', content: m.content })),
     ];
+
+    // 4. Only append userMessage if it wasn't already the last item (Deduplication)
+    if (!isDuplicate) {
+        messages.push({ role: 'user', content: userMessage });
+    }
+
+    // 5. Append Instruction
+    messages.push({ role: 'system', content: finalInstruction });
 
     // 3. EXECUTION
     let reply = "";
@@ -363,82 +338,6 @@ async function fetchWithRetry(fn: () => Promise<string>, retries = 1): Promise<s
 function limitEmojis(text: string): string {
     // Matches emojis. If more than 2 in a row, keep only 2.
     return text.replace(/(.)\1{2,}/gu, '$1$1'); // "😂😂😂" -> "😂😂"
-}
-
-// 4. IMAGE GENERATION (DEEPINFRA SDXL)
-const IMAGE_INTENT_REGEX = /(send|show|dikha).*(pic|photo|image|nude|boob|ass|body)/i;
-
-// 5. REFUSAL LOGIC (Hard to Get)
-function shouldRefuseImage(history: any[]): boolean {
-    // Look at last 10 messages
-    const recent = history.slice(-10);
-
-    // Count how many times user brought up images/nudes
-    const userRequests = recent.filter(m => m.role === 'user' && IMAGE_INTENT_REGEX.test(m.content)).length;
-
-    // Count how many times AI refused recently
-    const aiRefusals = recent.filter(m => m.role === 'assistant' && (
-        m.content.toLowerCase().includes('no') ||
-        m.content.toLowerCase().includes('cant') ||
-        m.content.toLowerCase().includes('later')
-    )).length;
-
-    console.log(`[AI Refusal Logic] Requests: ${userRequests}, Refusals: ${aiRefusals}`);
-
-    // LOGIC:
-    // 0 prior requests -> 80% Refusal
-    if (userRequests <= 1 && Math.random() < 0.8) return true;
-
-    // 1 prior request + 1 refusal -> 40% Refusal
-    if (userRequests === 2 && aiRefusals >= 1 && Math.random() < 0.4) return true;
-
-    // Otherwise -> Grant
-    return false;
-}
-
-async function generateImagePrompt(userText: string, persona: string): Promise<string | null> {
-    const prompt = `
-    IDENTITY: You are ${persona} (a real person).
-    USER SAID: "${userText}"
-    TASK: The user wants a photo. 
-    1. If they asked for something NSFW/Flirty (nudes, body, face), output a Stable Diffusion prompt describing a realistic selfie. 
-       Use tags: "raw photo, selfie, dim lighting, indian girl, 21yo, realistic skin texture, [NSFW_TAGS_IF_NEEDED]".
-    2. If they asked for something generic ("send dog"), output prompt for that.
-    3. If they did NOT ask for a photo, return "FALSE".
-    
-    OUTPUT FORMAT: Just the prompt text. OR "FALSE".
-    `;
-
-    try {
-        const response = await queryOpenRouter(MODEL_SMART, [{ role: 'system', content: prompt }]);
-        if (response.includes("FALSE")) return null;
-        const cleaned = response.replace(/["']/g, '').trim();
-        return cleaned;
-    } catch (e) {
-        return null;
-    }
-}
-
-async function generateStableDiffusionImage(prompt: string): Promise<string | null> {
-    try {
-        const negative = "deformed hands, extra fingers, cartoon, 3d render, anime, painting, bad anatomy, disfigured, watermark, text";
-        const finalPrompt = encodeURIComponent(`(raw photo, realistic, 8k:1.3), ${prompt}, ${negative}`);
-
-        // Pollinations.ai URL (Model: Flux, Size: 512x512, No Logo)
-        const url = `https://image.pollinations.ai/prompt/${finalPrompt}?width=512&height=512&nologo=true&model=flux`;
-
-        console.log(`[AI] Fetching image from Pollinations: ${url}`);
-
-        const response = await axios.get(url, { responseType: 'arraybuffer', timeout: 20000 });
-
-        if (response.data) {
-            const base64 = Buffer.from(response.data, 'binary').toString('base64');
-            return `data:image/jpeg;base64,${base64}`;
-        }
-    } catch (e) {
-        console.error("Image Gen Failed:", e);
-    }
-    return null;
 }
 
 // 3. TEXT DEGRADER (Makes it look human)
