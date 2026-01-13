@@ -651,15 +651,31 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
                                             if (index > 0) socket.emit('partner_typing', { isTyping: true });
 
                                             setTimeout(() => {
-                                                // DETECT IMAGE
-                                                if (msg.startsWith('[IMAGE_URL:')) {
-                                                    const imageUrl = msg.replace('[IMAGE_URL:', '').replace(']', '');
+                                                // DETECT IMAGE (Robust Regex to find it anywhere)
+                                                const imageMatch = msg.match(/\[IMAGE_URL:(.*?)\]/);
+
+                                                if (imageMatch) {
+                                                    const imageUrl = imageMatch[1];
+                                                    const cleanMessage = msg.replace(/\[IMAGE_URL:.*?\]/, '').trim();
+
+                                                    if (cleanMessage.length > 0) {
+                                                        // Send the text part first
+                                                        socket.emit('new_message', {
+                                                            sessionId,
+                                                            senderId: ghostProfile.id,
+                                                            message: cleanMessage,
+                                                            timestamp: Date.now(),
+                                                        });
+                                                    }
+
+                                                    // Send the image part
                                                     socket.emit('new_message', {
                                                         sessionId,
                                                         senderId: ghostProfile.id,
-                                                        message: "📷 Photo", // Caption
+                                                        message: "📷 Photo",
                                                         imageUrl: imageUrl,
                                                         type: 'image',
+                                                        expiresAt: Date.now() + (24 * 60 * 60 * 1000),
                                                         timestamp: Date.now(),
                                                     });
                                                 } else {
@@ -672,21 +688,18 @@ export function initializeSocketIO(httpServer: HttpServer): SocketIOServer {
                                                     });
                                                 }
 
-                                                // Recurse
-                                                sendMessages(messages, index + 1);
+                                                // Add to history
+                                                ghostSession.chatHistory.push({ role: 'assistant', content: msg });
+
+                                                // Send next message after a small pause (NO DUPLICATE CALL!)
+                                                if (index < messages.length - 1) {
+                                                    setTimeout(() => {
+                                                        sendMessages(messages, index + 1);
+                                                    }, 500);
+                                                } else {
+                                                    socket.emit('partner_typing', { isTyping: false });
+                                                }
                                             }, typingDelay);
-
-                                            // Add to history
-                                            ghostSession.chatHistory.push({ role: 'assistant', content: msg });
-
-                                            // If more messages, wait a tiny bit then type next
-                                            if (index < messages.length - 1) {
-                                                setTimeout(() => {
-                                                    sendMessages(messages, index + 1);
-                                                }, 500); // 500ms pause between messages
-                                            } else {
-                                                socket.emit('partner_typing', { isTyping: false });
-                                            }
 
                                         }; // End sendMessages
 
