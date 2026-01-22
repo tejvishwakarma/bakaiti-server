@@ -33,10 +33,21 @@ async function main() {
     // Security middleware
     app.use(helmet());
 
-    // CORS
+    // CORS - must come before other middleware
     app.use(cors({
-        origin: config.cors.allowedOrigins,
+        origin: (origin, callback) => {
+            const allowedOrigins = config.cors.allowedOrigins;
+            // Allow requests with no origin (like mobile apps or curl)
+            if (!origin) return callback(null, true);
+            if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
+                return callback(null, true);
+            }
+            console.log(`CORS blocked origin: ${origin}`);
+            return callback(null, false);
+        },
         credentials: true,
+        methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+        allowedHeaders: ['Content-Type', 'Authorization'],
     }));
 
     // Body parsing
