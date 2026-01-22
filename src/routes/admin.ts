@@ -8,14 +8,19 @@ const router = express.Router();
 const requireAdmin = async (req: any, res: any, next: any) => {
     try {
         const user = req.user;
+        console.log('🔍 Admin check - user:', user?.email, 'isAdmin:', user?.isAdmin, 'googleId:', user?.googleId);
+
         if (!user) {
+            console.log('❌ Admin check failed: No user in request');
             return res.status(401).json({ error: 'Unauthorized' });
         }
 
         if (!user.isAdmin) {
+            console.log('❌ Admin check failed: isAdmin is', user.isAdmin);
             return res.status(403).json({ error: 'Admin access required' });
         }
 
+        console.log('✅ Admin check passed for:', user.email);
         next();
     } catch (error) {
         console.error('Admin check error:', error);
